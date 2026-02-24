@@ -1,0 +1,146 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.17"
+  },
+  "auth": {
+    "profiles": {
+      "anthropic:sentinel": {
+        "provider": "anthropic",
+        "mode": "token"
+      },
+      "anthropic:default": {
+        "provider": "anthropic",
+        "mode": "api_key"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-5.1-codex"
+      },
+      "compaction": {
+        "mode": "safeguard"
+      }
+    },
+    "list": [
+      {
+        "id": "dev",
+        "default": true,
+        "workspace": "/home/<USER>/.openclaw-elyra/workspace-c3po",
+        "identity": {
+          "name": "C3-PO",
+          "theme": "protocol droid",
+          "emoji": "🤖"
+        }
+      },
+      {
+        "id": "forge",
+        "name": "forge",
+        "workspace": "/home/<USER>/.openclaw-elyra/workspace-forge",
+        "agentDir": "/home/<USER>/.openclaw-elyra/agents/forge/agent"
+      },
+      {
+        "id": "sentinel",
+        "name": "sentinel",
+        "workspace": "/home/<USER>/.openclaw-elyra/workspace-sentinel",
+        "agentDir": "/home/<USER>/.openclaw-elyra/agents/sentinel/agent"
+      },
+      {
+        "id": "glitch",
+        "name": "glitch",
+        "workspace": "/home/<USER>/.openclaw-elyra/workspace-glitch",
+        "agentDir": "/home/<USER>/.openclaw-elyra/agents/glitch/agent"
+      }
+    ]
+  },
+  "bindings": [
+    { "agentId": "dev",      "match": { "channel": "telegram", "accountId": "c3po" } },
+    { "agentId": "forge",    "match": { "channel": "telegram", "accountId": "forge" } },
+    { "agentId": "sentinel", "match": { "channel": "telegram", "accountId": "sentinel" } },
+    { "agentId": "glitch",   "match": { "channel": "telegram", "accountId": "glitch" } }
+  ],
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "command-logger": { "enabled": true },
+        "session-memory":  { "enabled": true }
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "groupPolicy": "allowlist",
+      "streamMode": "partial",
+      "accounts": {
+        "c3po": {
+          "name": "c3po-default",
+          "enabled": true,
+          "dmPolicy": "pairing",
+          "botToken": "<TELEGRAM_BOT_TOKEN_C3PO>",
+          "groupPolicy": "allowlist",
+          "streamMode": "partial"
+        },
+        "forge": {
+          "name": "settle-forge",
+          "enabled": true,
+          "dmPolicy": "pairing",
+          "tokenFile": "/home/<USER>/.openclaw-elyra/secrets/telegram-forge.token",
+          "groupPolicy": "allowlist",
+          "streamMode": "partial"
+        },
+        "sentinel": {
+          "name": "Sentinel",
+          "enabled": true,
+          "dmPolicy": "pairing",
+          "tokenFile": "/home/<USER>/.openclaw-elyra/secrets/telegram-sentinel.token",
+          "groupPolicy": "allowlist",
+          "streamMode": "partial"
+        },
+        "glitch": {
+          "name": "Glitch",
+          "enabled": true,
+          "dmPolicy": "pairing",
+          "tokenFile": "/home/<USER>/.openclaw-elyra/secrets/telegram-glitch.token",
+          "groupPolicy": "allowlist",
+          "streamMode": "partial"
+        }
+      }
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "controlUi": {
+      "allowedOrigins": [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000"
+      ]
+    },
+    "auth": {
+      "mode": "password",
+      "token": "<GATEWAY_TOKEN>",
+      "password": "<GATEWAY_PASSWORD>"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "remote": {
+      "token": "<GATEWAY_TOKEN>"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": { "enabled": true }
+    }
+  }
+}
