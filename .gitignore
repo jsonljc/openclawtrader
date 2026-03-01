@@ -1,53 +1,18 @@
-# Runtime state — never commit
-credentials/
-secrets/
-logs/
-memory/
-_backups/
-completions/
-delivery-queue/
-devices/
-identity/
-mission-control/
-canvas/
-cron/
-agents/
-telegram/
-workspaces/
+# Runtime state (gitignored)
+data/ledger/*.jsonl
+data/ledger/*.json
+data/state/*
+!data/ledger/.gitkeep
+!data/state/.gitkeep
 
-# Token and secret files
-*.token
-*.token.*
-
-# Openclaw runtime files
-openclaw.json.bak*
-openclaw.json.tmp
-update-check.json
-
-# The real config (contains live secrets — use openclaw.template.json instead)
-openclaw.json
-
-# Environment files with API keys
-.env
-.env.*
-
-# Corrupted directory from earlier shell injection
-workspace-sentinelopenclaw*
-
-# Python cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
-
-# Operational output directories (runtime only)
-c3po-log/
-c3po-heartbeat.log
-forge-log/
-sentinel-log/
-
-# Temp snapshot files
-/tmp/
-
-# OS
-.DS_Store
-Thumbs.db
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.env
+.env.local

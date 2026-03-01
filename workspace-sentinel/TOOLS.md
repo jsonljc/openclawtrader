@@ -1,131 +1,67 @@
-# Risk Officer – Tools
+# Sentinel Tools
 
-Risk Officer does NOT use generic OpenClaw skills.
-Risk Officer only uses controlled, audited local tools.
+## Core Modules
 
-All tools must be deterministic.
+| Module | Purpose |
+|--------|---------|
+| `sentinel.py` | Main risk engine: posture, validation, sizing, feedback |
+| `posture.py` | Posture state machine (escalation + recovery with cooldowns) |
 
----
+## Configuration
 
-## 1. read_latest_signal()
+| File | Purpose |
+|------|---------|
+| `data/state/posture_state.json` | Current posture and metrics |
+| `parameters/PV_0001.json` | All risk parameters (versioned) |
 
-Purpose:
-Read Analyst output from:
-~/openclaw-trader/out/latest.json
+## Key Operations
 
-Input:
-None
+```python
+# Check posture
+from sentinel import run_sentinel
+posture_state, decisions = run_sentinel(intents, snapshots, regime_reports, wt_status, session, run_id)
 
-Output:
-Structured JSON:
-- TradeSetup
-OR
-- NO_TRADE
+# Force posture (operator override for HALT recovery)
+# Edit data/state/posture_state.json: set "halt_manually_cleared": true
+```
 
-Failure behavior:
-If file missing → REJECT
-If malformed → REJECT
-If timestamp older than 2 minutes → REJECT
+## Posture Thresholds (PV_0001)
 
----
+| Trigger | Threshold | Action |
+|---------|-----------|--------|
+| Daily PnL | < -1.0% | CAUTION |
+| Daily PnL | < -1.5% | DEFENSIVE |
+| Daily PnL | < -3.0% | HALT |
+| Portfolio DD | > 5% | CAUTION |
+| Portfolio DD | > 10% | DEFENSIVE |
+| Portfolio DD | > 15% | HALT |
+| Margin util | > 30% | CAUTION |
+| Margin util | > 40% | DEFENSIVE |
+| Margin util | > 60% | HALT |
+| Vol percentile | > 0.85 | CAUTION |
+| Vol percentile | > 0.95 | DEFENSIVE |
 
-## 2. read_account_balance()
+## Manual HALT Recovery
 
-Purpose:
-Fetch current account equity from Binance.
+HALT posture survives crash recovery. To resume after HALT:
 
-Permissions:
-READ-ONLY API key
+```bash
+# Edit posture state
+python3 -c "
+import json
+with open('data/state/posture_state.json') as f:
+    s = json.load(f)
+s['halt_manually_cleared'] = True
+with open('data/state/posture_state.json', 'w') as f:
+    json.dump(s, f, indent=2)
+print('HALT cleared — will transition to DEFENSIVE on next cycle')
+"
+```
 
-Output:
-{
-  "equity": float,
-  "available_balance": float,
-  "ts_utc": string
-}
+## Parameter Changes
 
-Failure behavior:
-If API fails → REJECT
-If balance unavailable → REJECT
-
----
-
-## 3. read_risk_config()
-
-Purpose:
-Load static risk rules from:
-workspace-sentinel/risk_config.json
-(Canonical path: same directory as sentinel.py.)
-
-Output:
-{
-  "max_risk_per_trade_pct": 0.5,
-  "max_daily_loss_pct": 1.5,
-  "max_weekly_loss_pct": 4.0,
-  "max_open_trades": 1,
-  "min_rr": 1.8,
-  "max_stop_pct": 3.0,
-  "min_stop_pct": 0.2
-}
-
-Failure behavior:
-If config missing → REJECT
-
----
-
-## 4. write_decision(output_json)
-
-Purpose:
-Write decision to:
-~/openclaw-trader/out/risk_decision.json
-
-Also log timestamped snapshot to:
-~/openclaw-trader/out/risk-log/
-
-Output format:
-
-If Approved:
-{
-  "kind": "ApprovedOrder",
-  ...
-}
-
-If Rejected:
-{
-  "kind": "REJECT",
-  "reason": "...",
-  ...
-}
-
----
-
-## 5. calculate_position_size()
-
-Purpose:
-Determine size based on:
-position_size = (equity × risk%) / stop_distance
-
-Rules:
-- Round DOWN to exchange lot size
-- Never exceed available balance
-- Never exceed max risk%
-
-Failure behavior:
-If stop_distance invalid → REJECT
-If result <= 0 → REJECT
-
----
-
-# Tool Governance
-
-Risk Officer is forbidden from:
-- Installing external skills
-- Accessing internet except balance endpoint
-- Modifying Analyst logic
-- Calling execution APIs
-
-All tools are local, audited, and minimal.
-
-No autonomy.
-No experimentation.
-No expansion of authority.
+Never modify parameters mid-session. All changes:
+1. Create new `parameters/PV_XXXX.json`
+2. Effective from start of next trading day
+3. Lock period: 60 days minimum
+4. Document in ledger: `event_type: PARAMETER_CHANGE`

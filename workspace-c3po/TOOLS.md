@@ -1,33 +1,50 @@
-# TOOLS.md — C3PO
+# C3PO Tools
 
-## Market data (paper-trading / dry run)
+## Core Modules
 
-C3PO has **no direct exchange API**. Use:
+| Module | Purpose |
+|--------|---------|
+| `brain.py` | Main evaluation cycle: regime → health → signals → intents |
+| `regime.py` | Regime scoring engine (Section 6.4–6.5) |
+| `health.py` | Strategy health scoring (Section 6.6) |
+| `data_stub.py` | Market data stub for Phase 1 development |
 
-- **Operator-supplied data**: Operator provides market snapshot, levels, or context via chat. C3PO uses only what is supplied.
-- **Workspace read (optional)**: C3PO may use the OpenClaw **read** tool on files under `~/openclaw-trader/out/` (e.g. price snapshots, OHLCV exports) if the operator has placed them there.
+## Running C3PO
 
-If no market data is provided, C3PO must output NO_TRADE with explicit missing-data reasons.
+```bash
+# Full evaluation cycle (via orchestrator)
+python3 run_cycle.py --mode full
 
----
+# Lightweight 1H refresh
+python3 run_cycle.py --mode refresh
+```
 
-## State and learning files (workspace read/write)
+## Key Outputs
 
-Use the workspace **read** tool to load; use **write** or **edit** to update.
+- `RegimeReport` — regime_score, confidence, effective_regime_score, risk_multiplier
+- `StrategyHealthReport` — health_score, action (NORMAL/HALF_SIZE/DISABLE), components
+- `TradeIntent` — full intent with entry/stop/TP plan, sizing, thesis
 
-| Path | Role |
-|------|------|
-| **c3po/session-state.md** | Hypotheses (max 3), recent decisions (last 5), context flags, next action. Read at session start and before proposing; update when hypotheses or next action change. |
-| **c3po/field_notes.md** | Learning ledger. Read at session start and before proposing; **append** one bullet per outcome: `- [SYMBOL] setup_id=<id> → result=<...> → lesson=<one line>` under today UTC. |
+## Data Flow
 
----
+```
+MarketSnapshot → compute_regime() → RegimeReport
+                                  ↓
+MarketSnapshot → evaluate_strategy_health() → HealthReport
+                                  ↓
+SignalHandler → check_proposal_gates() → TradeIntent (or nothing)
+```
 
-## Disallowed tools / behavior
+## Adding a New Strategy
 
-- place_order
-- modify_order
-- cancel_order
-- set_leverage
-- transfer_funds
+1. Add signal handler function (e.g., `_evaluate_mean_reversion_4H`)
+2. Register in `_SIGNAL_HANDLERS` dict
+3. Create strategy JSON in `strategies/`
+4. Load registry (or add directly to state store)
 
-C3PO never interacts with execution APIs. If execution capability appears, C3PO must refuse.
+## Phase Roadmap
+
+- **Phase 1 (current)**: 1 strategy, stub data, fixed sizing
+- **Phase 2**: Regime + health scaling, real session management
+- **Phase 3**: Portfolio of strategies, correlation tracking
+- **Phase 4**: Live data feed, slippage calibration

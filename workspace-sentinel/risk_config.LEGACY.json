@@ -1,0 +1,20 @@
+{
+  "equity_usd": 10000,
+  "risk_per_trade_pct": 0.5,
+  "max_risk_per_trade_pct": 0.5,
+  "max_daily_loss_pct": 2.0,
+  "consecutive_loss_reduce": 2,
+  "consecutive_loss_halt": 3,
+  "confidence_min_score": 50,
+  "tier_size_multipliers": { "TIER_A": 1.0, "TIER_B": 0.75, "TIER_C": 0.5 },
+  "reduced_posture_multiplier": 0.5,
+  "max_weekly_loss_pct": 4,
+  "max_drawdown_pct": 6,
+  "max_open_trades": 1,
+  "min_rr": 1.8,
+  "min_stop_pct": 0.2,
+  "max_stop_pct": 3,
+  "max_staleness_seconds": 120,
+  "posture_size_multipliers": { "NORMAL": 1, "REDUCED": 0.5, "HALT": 0 },
+  "size_multipliers": { "TIER_A": 1, "TIER_B": 0.75, "TIER_C": 0.5 }
+}
