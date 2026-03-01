@@ -35,6 +35,7 @@ from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
+from shared.correlation import update_portfolio_heat_correlations
 
 import brain
 import sentinel
@@ -132,8 +133,11 @@ def run_full(
         _log(f"    → {r['status']} | {r.get('execution_id')} "
              f"fill={r.get('fill', {}).get('avg_fill_price')}")
 
-    elapsed = time.perf_counter() - t0
+    # 7. Portfolio heat: update correlations_20d (Phase 3)
     portfolio = store.load_portfolio()
+    update_portfolio_heat_correlations(portfolio)
+
+    elapsed = time.perf_counter() - t0
     return {
         "run_id":          run_id,
         "status":          "OK",
@@ -243,6 +247,9 @@ def run_reconciliation(
     dd = (peak - portfolio["account"]["equity_usd"]) / peak * 100.0 if peak > 0 else 0.0
     portfolio["pnl"]["portfolio_dd_pct"]  = round(dd, 4)
     store.save_portfolio(portfolio)
+
+    # Update correlations_20d (Phase 3)
+    update_portfolio_heat_correlations(portfolio)
 
     ledger.append(C.EventType.RECONCILIATION, run_id, "RECONCILE", {
         "positions_open":   len(positions),

@@ -341,6 +341,76 @@ def close_position(
 
 
 # ---------------------------------------------------------------------------
+# Roll execution — Phase 3: close front month, open next month
+# ---------------------------------------------------------------------------
+
+def execute_roll(
+    approval: dict,
+    intent: dict,
+    snapshots: dict[str, dict],
+    run_id: str,
+    paper: bool = True,
+) -> dict:
+    """Execute a roll: close position at current price, open same size in roll_to contract."""
+    if not paper:
+        raise NotImplementedError("Live roll not implemented (Phase 4)")
+    portfolio = store.load_portfolio()
+    position_id = approval.get("position_id") or intent.get("position_id")
+    pos = next((p for p in portfolio["positions"] if p.get("position_id") == position_id), None)
+    if not pos:
+        return {
+            "execution_id": IDs.make_execution_id(),
+            "approval_id":  approval["approval_id"],
+            "status":       C.ExecStatus.FAILED,
+            "reason":       f"Position {position_id} not found",
+        }
+    symbol = intent.get("symbol", "ES")
+    snapshot = snapshots.get(symbol, next(iter(snapshots.values()), {}))
+    current_price = snapshot.get("indicators", {}).get("last_price") or pos.get("entry_price", 0.0)
+    close_record = close_position(pos, current_price, "ROLL", run_id)
+    # Re-open same size in new contract
+    contracts = approval["sizing_final"]["contracts_allowed"]
+    strategy = store.load_strategy_registry().get(intent.get("strategy_id", ""), {})
+    roll_to = approval.get("roll_to", intent.get("roll_to", ""))
+    fill = {"fill_price": current_price, "contracts_filled": contracts, "slippage_ticks": 0,
+            "slippage_usd": 0.0, "fees_usd": 0.0, "fill_latency_ms": 50, "prng_seed": 0}
+    bracket, _ = _place_bracket(
+        {"position_id": None, "symbol": symbol, "stop_price": approval["stop_plan"].get("price"),
+         "take_profit_price": approval["take_profit_plan"].get("price"), "contracts": contracts,
+         "entry_price": current_price, "side": "LONG" if intent.get("side") == "BUY" else "SHORT"},
+        approval, run_id, paper
+    )
+    if bracket is None:
+        ledger.append(C.EventType.ALERT, run_id, approval["approval_id"], {
+            "alert_type": "ROLL_BRACKET_FAILED", "reason": "Bracket placement failed after roll close",
+        })
+        return {"execution_id": IDs.make_execution_id(), "approval_id": approval["approval_id"],
+                "status": C.ExecStatus.EMERGENCY_FLATTENED, "reason": "Bracket failed after roll"}
+    approval_roll = dict(approval)
+    approval_roll["contract_month"] = roll_to
+    approval_roll["stop_plan"] = approval.get("stop_plan", {})
+    approval_roll["take_profit_plan"] = approval.get("take_profit_plan", {})
+    approval_roll["margin_per_contract_usd"] = strategy.get("margin_per_contract_usd", 15840.0)
+    approval_roll["point_value_usd"] = strategy.get("point_value_usd", 50.0)
+    approval_roll["correlation_group"] = strategy.get("correlation_group", "")
+    new_pos = _register_position(approval_roll, fill, bracket, run_id)
+    ledger.append(C.EventType.BRACKET_CONFIRMED, run_id, new_pos["position_id"], {
+        "execution_id": IDs.make_execution_id(), "position_id": new_pos["position_id"],
+        "approval_id": approval["approval_id"], "stop": bracket["stop"], "take_profit": bracket["take_profit"],
+    })
+    return {
+        "execution_id":    IDs.make_execution_id(),
+        "approval_id":     approval["approval_id"],
+        "status":          C.ExecStatus.COMPLETE,
+        "position_id":     new_pos["position_id"],
+        "roll_from":       approval.get("roll_from"),
+        "roll_to":         roll_to,
+        "closed_pnl":      close_record.get("realized_pnl"),
+        "state":           C.IntentState.COMPLETE,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Core execution — spec 8.4
 # ---------------------------------------------------------------------------
 
@@ -634,6 +704,12 @@ def run_forge(
         intent_id = approval.get("intent_id", "")
         intent    = intents_by_id.get(intent_id)
         if not intent:
+            continue
+
+        intent_type = intent.get("intent_type", approval.get("intent_type"))
+        if intent_type == C.IntentType.ROLL:
+            receipt = execute_roll(approval, intent, snapshots, run_id, paper=paper)
+            receipts.append(receipt)
             continue
 
         symbol   = intent.get("symbol", "ES")

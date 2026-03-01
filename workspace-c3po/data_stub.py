@@ -224,12 +224,18 @@ def get_market_snapshot(
 
 
 def get_all_snapshots(force_signal: bool = False) -> dict[str, dict]:
-    """Return snapshots for all active symbols (Phase 1: ES only)."""
+    """Return snapshots for all active symbols (Phase 3: ES + NQ)."""
     session_override = SessionState.CORE if force_signal else None
     return {
         "ES": get_market_snapshot(
             "ES",
             base_price=5_060.0,
+            force_signal=force_signal,
+            session_override=session_override,
+        ),
+        "NQ": get_market_snapshot(
+            "NQ",
+            base_price=21_000.0,
             force_signal=force_signal,
             session_override=session_override,
         ),

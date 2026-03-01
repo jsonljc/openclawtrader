@@ -104,7 +104,7 @@ python3 run_cycle.py --mode recovery
 |-------|-------|--------|
 | Phase 1 (Weeks 1–4) | 1 instrument, 1 strategy, fixed sizing, crash recovery | **DONE** |
 | Phase 2 (Weeks 5–8) | Regime scaling, health scaling, Sentinel posture machine, session mgmt | **DONE** |
-| Phase 3 (Weeks 9–12) | 2nd strategy, portfolio heat, correlation tracking, contract rollover | Pending |
+| Phase 3 (Weeks 9–12) | 2nd strategy, portfolio heat, correlation tracking, contract rollover | **DONE** |
 | Phase 4 (Weeks 13–16) | Live data, slippage calibration, stress testing, operator alerting | Pending |
 
 ---

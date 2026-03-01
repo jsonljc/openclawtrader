@@ -25,6 +25,7 @@ from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
+from shared.contract_calendar import next_contract_month
 
 from regime import compute_regime as _compute_regime
 from health import evaluate_strategy_health
@@ -337,9 +338,8 @@ def _build_roll_intent(
 ) -> dict:
     intent_id = IDs.make_intent_id()
     sym = strategy.get("symbol", "ES")
-    cur_month  = strategy.get("contract_month", "")
-    # Phase 1: next contract month is a placeholder; Phase 2 adds calendar lookup
-    next_month = cur_month + "_NEXT"
+    cur_month  = position.get("contract_month", strategy.get("contract_month", ""))
+    next_month = next_contract_month(sym, cur_month)
 
     return {
         "intent_id":     intent_id,
@@ -348,10 +348,14 @@ def _build_roll_intent(
         "strategy_id":   strategy["strategy_id"],
         "intent_type":   C.IntentType.ROLL,
         "symbol":        sym,
+        "position_id":   position.get("position_id"),
         "roll_from":     position.get("contract_month", cur_month),
         "roll_to":       next_month,
         "current_contracts": position.get("contracts", 1),
         "side":          "BUY" if position.get("side") == "LONG" else "SELL",
+        "entry_price":   position.get("entry_price"),
+        "stop_price":    position.get("stop_price"),
+        "take_profit_price": position.get("take_profit_price"),
         "estimated_calendar_spread_usd": None,
         "estimated_roll_cost_total_usd": None,
         "reason":        f"{strategy.get('roll_days_before_expiry', 5)} days to expiry; standard roll window",

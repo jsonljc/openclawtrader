@@ -133,11 +133,13 @@ def check_idempotency(intent: dict, portfolio: dict) -> tuple[bool, str]:
         if p.get("intent_id") == intent_id:
             return False, f"Duplicate: intent_id {intent_id} already processed (seq={entry['ledger_seq']})"
 
-    # Check 2: active position for same strategy + symbol + side
+    # Check 2: active position for same strategy + symbol + side (skip if ROLL targeting that position)
     for pos in portfolio.get("positions", []):
         if (pos.get("strategy_id") == strategy_id
                 and pos.get("symbol") == symbol
                 and pos.get("side") == position_side):
+            if intent.get("intent_type") == C.IntentType.ROLL and pos.get("position_id") == intent.get("position_id"):
+                break  # This is the position we're rolling — allow
             return False, f"Active position already exists for {strategy_id}/{symbol}/{position_side}"
 
     # Check 3: conflicting pending intent (same strategy+symbol, non-terminal, NOT this intent)
@@ -366,6 +368,43 @@ def _approve_exit(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict
     }
 
 
+def _approve_roll(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict:
+    """Phase 3: Approve roll intent — same contracts, new contract month."""
+    contracts = intent.get("current_contracts", 1)
+    return {
+        "approval_id":     approval_id,
+        "intent_id":       intent["intent_id"],
+        "strategy_id":     intent.get("strategy_id", ""),
+        "symbol":          intent.get("symbol", ""),
+        "run_id":          run_id,
+        "param_version":   intent.get("param_version", "PV_0001"),
+        "decision":        C.RiskDecision.APPROVE,
+        "sentinel_posture": "NORMAL",
+        "intent_type":     C.IntentType.ROLL,
+        "side":            intent.get("side"),
+        "position_id":     intent.get("position_id"),
+        "roll_from":       intent.get("roll_from"),
+        "roll_to":         intent.get("roll_to"),
+        "sizing_final": {
+            "contracts_allowed": contracts,
+            "use_micro":         False,
+            "final_risk_pct":    0.0,
+            "reduction_reason":  None,
+        },
+        "constraints": {
+            "max_slippage_ticks":         sp.get("max_slippage_ticks", 4),
+            "max_time_to_fill_sec":       15,
+            "reduce_if_spread_ticks_gt":  2,
+        },
+        "stop_plan":          {"price": intent.get("stop_price")},
+        "take_profit_plan":   {"price": intent.get("take_profit_price")},
+        "checks":    {"passed": [], "failed": [], "warnings": []},
+        "reasons":   [],
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+        "state":       C.IntentState.APPROVED,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Intent evaluation
 # ---------------------------------------------------------------------------
@@ -395,6 +434,12 @@ def evaluate_intent(
     # --- EXIT / FLATTEN / SCALE_OUT: always allowed ---
     if intent_type in C.IntentType.RELAXED:
         decision = _approve_exit(intent, approval_id, run_id, sp)
+        ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, decision)
+        return decision
+
+    # --- ROLL: approve same size (Phase 3) ---
+    if intent_type == C.IntentType.ROLL:
+        decision = _approve_roll(intent, approval_id, run_id, sp)
         ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, decision)
         return decision
 
