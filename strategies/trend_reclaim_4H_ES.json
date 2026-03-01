@@ -1,0 +1,58 @@
+{
+  "strategy_id": "trend_reclaim_4H_ES",
+  "description": "4H trend reclaim on ES; enters on price reclaim above key MA20 with ADX confirmation",
+  "symbol": "ES",
+  "timeframe": "4H",
+  "contract_type": "FUTURE",
+  "contract_month": "ESM26",
+  "tick_size": 0.25,
+  "tick_value_usd": 12.50,
+  "point_value_usd": 50.00,
+  "micro_available": true,
+  "micro_symbol": "MES",
+  "micro_point_value_usd": 5.00,
+  "micro_tick_value_usd": 1.25,
+  "correlation_group": "equity_beta",
+  "fee_per_contract_round_trip_usd": 4.62,
+  "margin_per_contract_usd": 15840.00,
+  "micro_margin_per_contract_usd": 1584.00,
+
+  "risk_budget_pct": 0.50,
+  "max_strategy_dd_pct": 8.0,
+  "expected_monthly_return_pct": 5.0,
+  "expected_max_dd_pct": 10.0,
+  "expected_sharpe": 1.2,
+  "expected_hit_rate": 0.45,
+  "expected_avg_slippage_ticks": 1.0,
+  "expected_trades_per_month": 8,
+  "min_health_score": 0.30,
+  "cooldown_bars_after_disable": 20,
+  "min_trades_for_full_health": 10,
+  "max_hold_bars": 20,
+
+  "contract_expiry": "2026-06-20",
+  "roll_days_before_expiry": 5,
+  "session_schedule": {
+    "core":       {"start": "09:30", "end": "16:00", "tz": "America/New_York"},
+    "extended":   {"start": "18:00", "end": "09:30", "tz": "America/New_York"},
+    "closed":     {"start": "16:00", "end": "18:00", "tz": "America/New_York"}
+  },
+
+  "signal": {
+    "entry_condition": "price_reclaim_above_ma20",
+    "adx_min": 25,
+    "stop_atr_multiple": 1.5,
+    "tp_atr_multiple": 1.5,
+    "min_reward_risk": 1.0
+  },
+
+  "status": "ACTIVE",
+  "status_changed_at": "2026-02-28T00:00:00Z",
+  "incubation": {
+    "is_incubating": false,
+    "incubation_start": null,
+    "incubation_size_pct": 5,
+    "incubation_min_trades": 20,
+    "incubation_min_days": 30
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "param_version": "PV_0001",
+  "created_at": "2026-02-28T00:00:00Z",
+  "created_by": "operator",
+  "effective_from": "2026-02-28T00:00:00Z",
+
+  "regime": {
+    "weight_trend": 0.35,
+    "weight_vol": 0.30,
+    "weight_corr": 0.20,
+    "weight_liquidity": 0.15,
+    "sigmoid_steepness": 10,
+    "risk_multiplier_floor": 0.30
+  },
+
+  "health": {
+    "weight_dd": 0.35,
+    "weight_sharpe": 0.25,
+    "weight_hit_rate": 0.20,
+    "weight_execution": 0.20,
+    "min_trades_for_full_health": 10,
+    "disable_threshold": 0.30,
+    "half_size_threshold": 0.50
+  },
+
+  "sentinel": {
+    "max_risk_per_trade_pct": 1.0,
+    "max_open_risk_pct": 5.0,
+    "max_daily_loss_pct": -3.0,
+    "max_portfolio_dd_pct": -15.0,
+    "max_margin_utilization_pct": 40.0,
+    "max_cluster_exposure_pct": 3.0,
+    "max_instrument_exposure_pct": 2.0,
+    "max_intra_cluster_corr": 0.85,
+    "max_concurrent_strategies": 4,
+    "max_slippage_ticks": 4,
+    "min_reward_risk_ratio": 0.8,
+    "max_intent_age_sec": 900,
+    "daily_loss_caution_pct": -1.0,
+    "daily_loss_defensive_pct": -1.5,
+    "daily_loss_halt_pct": -3.0,
+    "dd_caution_pct": 5.0,
+    "dd_defensive_pct": 10.0,
+    "dd_halt_pct": 15.0,
+    "recovery_cooldown_caution_to_normal_hours": 4,
+    "recovery_cooldown_defensive_to_caution_days": 2
+  },
+
+  "sizing": {
+    "posture_modifier_normal": 1.0,
+    "posture_modifier_caution": 0.6,
+    "posture_modifier_defensive": 0.25,
+    "session_modifier_extended": 0.5,
+    "target_vol_normal_pct": 12.0,
+    "target_vol_caution_pct": 8.0,
+    "target_vol_defensive_pct": 4.0
+  },
+
+  "overnight": {
+    "flatten_vol_pct_threshold": 0.80,
+    "flatten_loss_pct_of_stop": 0.50,
+    "partial_exit_profit_progress": 0.50,
+    "partial_exit_pct": 50,
+    "stop_tightening_pct": 0.30
+  },
+
+  "slippage": {
+    "base_ticks": 1,
+    "vol_threshold_low": 0.50,
+    "vol_threshold_high": 0.80,
+    "vol_factor_low_slope": 4.0,
+    "vol_factor_high_slope": 15.0,
+    "session_factor_extended": 1.5,
+    "session_factor_boundary": 2.0,
+    "session_factor_pre_open": 3.0,
+    "ev_ratio_min": 0.5
+  }
+}
