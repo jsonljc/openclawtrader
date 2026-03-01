@@ -277,12 +277,13 @@ def _run_hard_checks(
     max_instr  = sp.get("max_instrument_exposure_pct", 2.0)
     check("instrument_exposure", round(instr_pct, 4), max_instr, "%", instr_pct <= max_instr)
 
-    # Rule 8: Intra-cluster correlation (warning only — Phase 2 will enforce)
+    # Rule 8: Intra-cluster correlation (Phase 2: enforce)
     corr_20d = heat.get("correlations_20d", {})
     max_corr  = sp.get("max_intra_cluster_corr", 0.85)
     for pair, corr in corr_20d.items():
         if corr > max_corr:
-            warnings.append(f"Intra-cluster correlation {pair}={corr:.2f} > {max_corr}")
+            failed.append({"rule": "max_intra_cluster_corr", "value": corr,
+                           "limit": max_corr, "unit": "", "pair": pair})
 
     # Rule 9: Max concurrent open strategies
     open_strategies = len({p.get("strategy_id") for p in portfolio.get("positions", [])})
@@ -376,6 +377,8 @@ def evaluate_intent(
     posture: str,
     run_id: str,
     param_version: str = "PV_0001",
+    regime_report: dict | None = None,
+    health_by_strategy: dict[str, dict] | None = None,
 ) -> dict:
     """
     Evaluate one trade intent.  Returns a risk decision dict.
@@ -424,7 +427,21 @@ def evaluate_intent(
     base_risk_pct = strategy.get("risk_budget_pct", 0.5)
     base_risk_usd = equity * base_risk_pct / 100.0
 
-    # Phase 1: no regime/health scaling — posture modifier only
+    # Regime modifier (Phase 2) — from brain's regime report
+    regime_mod = 1.0
+    if regime_report:
+        regime_mod = regime_report.get("risk_multiplier", 1.0)
+
+    # Health modifier — from brain's health report for this strategy
+    health_mod = 1.0
+    if health_by_strategy and strategy_id in health_by_strategy:
+        h = health_by_strategy[strategy_id]
+        health_mod = {
+            C.HealthAction.NORMAL:    1.0,
+            C.HealthAction.HALF_SIZE: 0.5,
+            C.HealthAction.DISABLE:   0.0,
+        }.get(h.get("action", C.HealthAction.NORMAL), 1.0)
+
     posture_mod = {
         C.Posture.NORMAL:    sizing.get("posture_modifier_normal",    1.0),
         C.Posture.CAUTION:   sizing.get("posture_modifier_caution",   0.6),
@@ -441,7 +458,7 @@ def evaluate_intent(
     incub = strategy.get("incubation", {})
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
-    final_risk_usd = base_risk_usd * posture_mod * session_mod * incub_mod
+    final_risk_usd = base_risk_usd * regime_mod * health_mod * posture_mod * session_mod * incub_mod
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)
@@ -489,8 +506,9 @@ def evaluate_intent(
     if failed:
         fail_reasons = [f"{r['rule']}: {r['value']} > limit {r['limit']}" for r in failed]
 
-        # Log missed opportunity before denying
-        _track_missed_opportunity(intent, "; ".join(fail_reasons), posture, run_id)
+        # Log missed opportunity before denying (Phase 2: simulate outcome)
+        _track_missed_opportunity(intent, "; ".join(fail_reasons), posture, run_id,
+                                  snapshot=snapshot, portfolio=portfolio)
 
         deny = _deny(intent, approval_id, run_id, "; ".join(fail_reasons), sp)
         deny["checks"] = {"passed": passed, "failed": failed, "warnings": warnings}
@@ -547,13 +565,64 @@ def evaluate_intent(
 # Missed opportunity tracking — spec 7.10
 # ---------------------------------------------------------------------------
 
+def _simulate_missed_outcome(intent: dict, snapshot: dict, portfolio: dict) -> tuple[str | None, float | None, float | None]:
+    """
+    Phase 2: Simulate what would have happened if we had taken the trade.
+    Uses current bar high/low to check stop/TP. Returns (outcome, pnl_usd, pnl_pct).
+    """
+    stop_price = intent.get("stop_plan", {}).get("price")
+    tp_price = intent.get("take_profit_plan", {}).get("price")
+    side = intent.get("side", "BUY")
+    contracts = intent.get("sizing", {}).get("contracts_suggested", 1)
+    entry_price = snapshot.get("indicators", {}).get("last_price", 0.0)
+    bars_1h = snapshot.get("bars", {}).get("1H", [])
+    if not bars_1h or not stop_price or not tp_price:
+        return None, None, None
+    bar = bars_1h[-1]
+    bar_high = bar.get("h", bar.get("high", entry_price))
+    bar_low = bar.get("l", bar.get("low", entry_price))
+    registry = store.load_strategy_registry()
+    strategy = registry.get(intent.get("strategy_id", ""), {})
+    pv = strategy.get("point_value_usd", 50.0)
+    if intent.get("sizing", {}).get("use_micro"):
+        pv = strategy.get("micro_point_value_usd", 5.0)
+    exit_price = entry_price
+    outcome = "OPEN"
+    if side == "BUY":
+        if bar_low <= stop_price:
+            exit_price = stop_price
+            outcome = "STOP_HIT"
+        elif bar_high >= tp_price:
+            exit_price = tp_price
+            outcome = "TP_HIT"
+    else:
+        if bar_high >= stop_price:
+            exit_price = stop_price
+            outcome = "STOP_HIT"
+        elif bar_low <= tp_price:
+            exit_price = tp_price
+            outcome = "TP_HIT"
+    if side == "BUY":
+        pnl = (exit_price - entry_price) * pv * contracts
+    else:
+        pnl = (entry_price - exit_price) * pv * contracts
+    equity = portfolio.get("account", {}).get("equity_usd", 100_000)
+    pnl_pct = (pnl / equity * 100.0) if equity > 0 else 0.0
+    return outcome, round(pnl, 2), round(pnl_pct, 4)
+
+
 def _track_missed_opportunity(
     intent: dict,
     deny_reason: str,
     posture: str,
     run_id: str,
+    snapshot: dict | None = None,
+    portfolio: dict | None = None,
 ) -> None:
-    """Log a MISSED_OPPORTUNITY event. Simulated outcome is filled in later (Phase 2)."""
+    """Log a MISSED_OPPORTUNITY event. Phase 2: simulate outcome when snapshot available."""
+    sim_outcome, sim_pnl, sim_pct = None, None, None
+    if snapshot and portfolio:
+        sim_outcome, sim_pnl, sim_pct = _simulate_missed_outcome(intent, snapshot, portfolio)
     ledger.append(C.EventType.MISSED_OPPORTUNITY, run_id, intent.get("intent_id", ""), {
         "intent_id":               intent.get("intent_id"),
         "strategy_id":             intent.get("strategy_id"),
@@ -563,9 +632,9 @@ def _track_missed_opportunity(
         "tp_price":                intent.get("take_profit_plan", {}).get("price"),
         "deny_reason":             deny_reason,
         "sentinel_posture_at_deny": posture,
-        "simulated_outcome":       None,  # Phase 2: back-fill
-        "simulated_pnl_usd":       None,
-        "simulated_pnl_pct":       None,
+        "simulated_outcome":       sim_outcome,
+        "simulated_pnl_usd":       sim_pnl,
+        "simulated_pnl_pct":       sim_pct,
     })
 
 
@@ -605,6 +674,8 @@ def run_sentinel(
     snapshots: dict[str, dict],
     run_id: str,
     param_version: str = "PV_0001",
+    regime_report: dict | None = None,
+    health_by_strategy: dict[str, dict] | None = None,
 ) -> list[dict]:
     """
     Evaluate all intents.  Returns list of risk decisions.
@@ -614,6 +685,7 @@ def run_sentinel(
     posture = posture_state.get("posture", C.Posture.NORMAL)
 
     decisions: list[dict] = []
+    health_by_strategy = health_by_strategy or {}
 
     for intent in intents:
         symbol   = intent.get("symbol", "ES")
@@ -626,6 +698,8 @@ def run_sentinel(
             posture,
             run_id,
             param_version,
+            regime_report=regime_report,
+            health_by_strategy=health_by_strategy,
         )
         decisions.append(decision)
 

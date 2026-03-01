@@ -26,189 +26,26 @@ from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 
-
-# ---------------------------------------------------------------------------
-# Regime scoring stub (Phase 1: returns fixed neutral score)
-# Phase 2 will replace with full computation from spec 6.4
-# ---------------------------------------------------------------------------
-
-def compute_regime(snapshot: dict, param_version: str = "PV_0001") -> dict:
-    """
-    Phase 1: return a neutral-to-risk-on regime report.
-    The risk_multiplier is hardcoded to 1.0 (no scaling).
-    Phase 2 will implement full sigmoid-weighted computation.
-    """
-    now = snapshot.get("asof", datetime.now(timezone.utc).isoformat())
-    ind = snapshot.get("indicators", {})
-    adx = ind.get("adx_14", 25.0)
-
-    # Simple linear trend_score from ADX
-    trend_score = min(1.0, adx / 50.0)
-
-    return {
-        "report_id":              f"RR_{now[:16].replace('-', '').replace('T', '_').replace(':', '')}",
-        "run_id":                 "",
-        "asof":                   now,
-        "param_version":          param_version,
-        "regime_score":           round(trend_score, 4),
-        "confidence":             0.70,
-        "effective_regime_score": round(trend_score, 4),
-        "risk_multiplier":        1.0,
-        "drivers": {
-            "trend_score":       {"raw": trend_score, "weight": 0.35},
-            "vol_percentile":    {"raw": 0.50,        "weight": 0.30},
-            "corr_stress":       {"raw": 0.30,        "weight": 0.20},
-            "liquidity_score":   {"raw": 0.85,        "weight": 0.15},
-        },
-        "mode_hint": "NEUTRAL" if trend_score < 0.4 else "NEUTRAL_TO_RISK_ON",
-    }
+from regime import compute_regime as _compute_regime
+from health import evaluate_strategy_health
 
 
 # ---------------------------------------------------------------------------
-# Strategy health stub (Phase 1: returns neutral health from ledger stats)
-# Phase 2 will add full Sharpe/DD/hit-rate computation — spec 6.6
+# Regime scoring — delegated to regime.py (Phase 2)
 # ---------------------------------------------------------------------------
 
-def evaluate_strategy_health(
-    strategy: dict,
-    param_version: str = "PV_0001",
-) -> dict:
-    """
-    Phase 1: compute health from available POSITION_CLOSED events.
-    Returns neutral defaults if fewer than 3 closed trades exist.
-    """
-    strategy_id = strategy.get("strategy_id", "")
-    params      = store.load_params(param_version)
-    hp          = params.get("health", {})
-    now         = datetime.now(timezone.utc).isoformat()
-    cutoff      = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+def _compute_regime_for_snapshot(snapshot: dict, portfolio: dict, param_version: str, run_id: str) -> dict:
+    """Delegate to regime.py for full sigmoid-weighted scoring."""
+    return _compute_regime(snapshot, portfolio, param_version, run_id, snapshot.get("asof"))
 
-    closes = [
-        e for e in ledger.query(event_types=[C.EventType.POSITION_CLOSED], limit=500)
-        if e.get("payload", {}).get("strategy_id") == strategy_id
-        and e.get("timestamp", "") >= cutoff
-    ]
 
-    n = len(closes)
-    min_trades = hp.get("min_trades_for_full_health", 10)
+# ---------------------------------------------------------------------------
+# Strategy health — delegated to health.py
+# ---------------------------------------------------------------------------
 
-    if n < 3:
-        health_score = 0.60
-        capped       = True
-        action       = C.HealthAction.NORMAL
-        stats = {
-            "realized_dd_pct":         0.0,
-            "expected_dd_pct":         strategy.get("expected_max_dd_pct", 10.0),
-            "realized_sharpe_30d":     0.0,
-            "expected_sharpe":         strategy.get("expected_sharpe", 1.2),
-            "realized_hit_rate_30d":   0.0,
-            "expected_hit_rate":       strategy.get("expected_hit_rate", 0.45),
-            "avg_slippage_ticks_30d":  1.0,
-            "expected_slippage_ticks": strategy.get("expected_avg_slippage_ticks", 1.0),
-            "trade_count_30d":         n,
-            "profit_factor_30d":       1.0,
-            "avg_win_loss_ratio":      1.0,
-            "consecutive_losses_current": 0,
-            "consecutive_losses_max_30d": 0,
-        }
-    else:
-        pnls = [e["payload"].get("realized_pnl", 0.0) for e in closes]
-        wins = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p < 0]
-        hit_rate   = len(wins) / n
-        avg_win    = sum(wins) / len(wins)   if wins   else 0.0
-        avg_loss   = abs(sum(losses) / len(losses)) if losses else 0.01
-        wl_ratio   = avg_win / avg_loss
-
-        # Sharpe approximation from daily PnL sequence (simplified)
-        import statistics
-        std  = statistics.stdev(pnls) if len(pnls) > 1 else 0.01
-        mean = statistics.mean(pnls)
-        sharpe = (mean / std * math.sqrt(252 / 20)) if std > 0 else 0.0
-
-        pf = abs(sum(wins)) / abs(sum(losses)) if losses else 2.0
-
-        # Drawdown from equity curve
-        equity = 0.0
-        peak   = 0.0
-        max_dd = 0.0
-        for p in pnls:
-            equity += p
-            peak    = max(peak, equity)
-            dd      = (peak - equity) / peak * 100.0 if peak > 0 else 0.0
-            max_dd  = max(max_dd, dd)
-
-        # Consecutive losses
-        consec = 0
-        max_consec = 0
-        for p in pnls:
-            if p < 0:
-                consec += 1
-                max_consec = max(max_consec, consec)
-            else:
-                consec = 0
-
-        # Health score per spec 6.6
-        exp_dd      = strategy.get("expected_max_dd_pct", 10.0)
-        exp_sharpe  = strategy.get("expected_sharpe", 1.2)
-        exp_hr      = strategy.get("expected_hit_rate", 0.45)
-        exp_slip    = strategy.get("expected_avg_slippage_ticks", 1.0)
-
-        exec_quality_raw = store.load_exec_quality().get(strategy_id, {})
-        avg_slip_30d     = exec_quality_raw.get("avg_realized_slippage_ticks_20", 1.0)
-
-        dd_ratio    = max(0.0, min(1.0, 1.0 - max_dd / exp_dd)) if exp_dd > 0 else 1.0
-        sharpe_rat  = max(0.0, min(1.0, sharpe / exp_sharpe))   if exp_sharpe > 0 else 0.5
-        hr_ratio    = max(0.0, min(1.0, hit_rate / exp_hr))      if exp_hr > 0 else 0.5
-        eq_ratio    = max(0.0, min(1.0, 1.0 - (avg_slip_30d - exp_slip) / (exp_slip + 0.001)))
-
-        w = hp
-        health_score = (
-            w.get("weight_dd", 0.35)        * dd_ratio  +
-            w.get("weight_sharpe", 0.25)    * sharpe_rat +
-            w.get("weight_hit_rate", 0.20)  * hr_ratio  +
-            w.get("weight_execution", 0.20) * eq_ratio
-        )
-        capped = n < min_trades
-        if capped:
-            health_score = min(health_score, 0.60)
-
-        disable_thresh   = hp.get("disable_threshold", 0.30)
-        half_thresh      = hp.get("half_size_threshold", 0.50)
-        if health_score < disable_thresh:
-            action = C.HealthAction.DISABLE
-        elif health_score < half_thresh:
-            action = C.HealthAction.HALF_SIZE
-        else:
-            action = C.HealthAction.NORMAL
-
-        stats = {
-            "realized_dd_pct":         round(max_dd, 4),
-            "expected_dd_pct":         exp_dd,
-            "realized_sharpe_30d":     round(sharpe, 4),
-            "expected_sharpe":         exp_sharpe,
-            "realized_hit_rate_30d":   round(hit_rate, 4),
-            "expected_hit_rate":       exp_hr,
-            "avg_slippage_ticks_30d":  round(avg_slip_30d, 2),
-            "expected_slippage_ticks": exp_slip,
-            "trade_count_30d":         n,
-            "profit_factor_30d":       round(pf, 4),
-            "avg_win_loss_ratio":      round(wl_ratio, 4),
-            "consecutive_losses_current": consec,
-            "consecutive_losses_max_30d": max_consec,
-        }
-
-    report = C.make_health_report(
-        strategy_id=strategy_id,
-        asof=now,
-        param_version=param_version,
-        health_score=health_score,
-        health_score_capped=capped,
-        action=action,
-        components={},
-        stats=stats,
-    )
-    return report
+def _evaluate_strategy_health(strategy: dict, param_version: str = "PV_0001") -> dict:
+    """Delegate to health.py."""
+    return evaluate_strategy_health(strategy, param_version)
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +186,7 @@ def _evaluate_trend_reclaim_4H(
 def _suggest_sizing(
     strategy: dict,
     health: dict,
+    regime: dict,
     snapshot: dict,
     signal: dict,
     equity: float,
@@ -356,6 +194,9 @@ def _suggest_sizing(
     """Compute C3PO's sizing suggestion (before Sentinel applies posture mod)."""
     base_risk_pct = strategy.get("risk_budget_pct", 0.50)
     base_risk_usd = equity * base_risk_pct / 100.0
+
+    # Regime modifier (Phase 2)
+    regime_mod = regime.get("risk_multiplier", 1.0)
 
     # Health modifier
     health_mod = {
@@ -372,7 +213,7 @@ def _suggest_sizing(
     incub = strategy.get("incubation", {})
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
-    final_risk_usd = base_risk_usd * health_mod * session_mod * incub_mod
+    final_risk_usd = base_risk_usd * regime_mod * health_mod * session_mod * incub_mod
 
     # Contract sizing
     stop_dist_pts  = signal["stop_dist"]
@@ -398,8 +239,8 @@ def _suggest_sizing(
         "contracts_suggested":     max(1, contracts),
         "use_micro":               use_micro,
         "risk_pct_suggested":      round(base_risk_pct, 4),
-        "risk_pct_after_health":   round(base_risk_pct * health_mod * session_mod * incub_mod, 4),
-        "risk_multiplier_regime":  1.0,
+        "risk_pct_after_health":   round(base_risk_pct * regime_mod * health_mod * session_mod * incub_mod, 4),
+        "risk_multiplier_regime":  regime_mod,
         "risk_multiplier_health":  health_mod,
         "risk_multiplier_session": session_mod,
         "final_risk_usd":          round(final_risk_usd, 2),
@@ -539,10 +380,10 @@ def run_brain(
     run_id: str,
     param_version: str = "PV_0001",
     watchtower_status: str = C.WatchtowerStatus.HEALTHY,
-) -> list[dict]:
+) -> tuple[list[dict], dict | None, dict[str, dict]]:
     """
     Run the C3PO evaluation cycle.
-    Returns list of trade intents to pass to Sentinel.
+    Returns (intents, regime_report, health_by_strategy) for Sentinel sizing.
     """
     registry  = store.load_strategy_registry()
     portfolio = store.load_portfolio()
@@ -551,6 +392,8 @@ def run_brain(
     equity    = portfolio["account"]["equity_usd"]
 
     intents: list[dict] = []
+    regime_report: dict | None = None
+    health_by_strategy: dict[str, dict] = {}
 
     for strategy_id, strategy in registry.items():
         if strategy.get("status") not in (C.StrategyStatus.ACTIVE, C.StrategyStatus.INCUBATING):
@@ -563,8 +406,11 @@ def run_brain(
             continue
 
         # Compute regime and health reports
-        regime = compute_regime(snap, param_version)
-        health = evaluate_strategy_health(strategy, param_version)
+        regime = _compute_regime_for_snapshot(snap, portfolio, param_version, run_id)
+        health = _evaluate_strategy_health(strategy, param_version)
+        if regime_report is None:
+            regime_report = regime
+        health_by_strategy[strategy_id] = health
 
         # Log reports
         ledger.append(C.EventType.REGIME_COMPUTED, run_id, regime["report_id"], regime)
@@ -598,7 +444,7 @@ def run_brain(
             continue  # No signal this cycle
 
         # Size the trade
-        sizing = _suggest_sizing(strategy, health, snap, signal, equity)
+        sizing = _suggest_sizing(strategy, health, regime, snap, signal, equity)
         if sizing.get("contracts_suggested", 0) == 0:
             continue
 
@@ -608,4 +454,4 @@ def run_brain(
         ledger.append(C.EventType.INTENT_CREATED, run_id, intent["intent_id"], intent)
         intents.append(intent)
 
-    return intents
+    return intents, regime_report, health_by_strategy

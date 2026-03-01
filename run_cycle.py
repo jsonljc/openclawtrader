@@ -40,6 +40,7 @@ import brain
 import sentinel
 import forge
 import watchtower
+import posture
 from data_stub import get_all_snapshots
 
 
@@ -76,7 +77,11 @@ def run_full(
     snapshots = get_all_snapshots(force_signal=force_signal)
     _log(f"  Snapshots loaded: {list(snapshots.keys())}")
 
-    # 2. Watchtower health check
+    # 2. Posture update (Phase 2: auto-escalate/recover)
+    portfolio = store.load_portfolio()
+    posture.update_posture(portfolio, param_version, run_id)
+
+    # 3. Watchtower health check
     health = watchtower.run_health_check(snapshots, run_id)
     _log(f"  Watchtower: {health['status']}"
          + (f" — {health['active_alerts']}" if health["active_alerts"] else ""))
@@ -88,8 +93,10 @@ def run_full(
 
     wt_status = health["status"]
 
-    # 3. C3PO: compute regime, health, emit intents
-    intents = brain.run_brain(snapshots, run_id, param_version, wt_status)
+    # 4. C3PO: compute regime, health, emit intents
+    intents, regime_report, health_by_strategy = brain.run_brain(
+        snapshots, run_id, param_version, wt_status
+    )
     _log(f"  C3PO intents: {len(intents)}")
     for i in intents:
         _log(f"    → {i['intent_type']} {i.get('symbol')} {i.get('side', '')} | {i['intent_id']}")
@@ -99,8 +106,12 @@ def run_full(
         return {"run_id": run_id, "status": "NO_SIGNAL", "intents": 0,
                 "approvals": 0, "executions": 0, "cycle_sec": round(elapsed, 2)}
 
-    # 4. Sentinel: validate + size
-    approvals = sentinel.run_sentinel(intents, snapshots, run_id, param_version)
+    # 5. Sentinel: validate + size
+    approvals = sentinel.run_sentinel(
+        intents, snapshots, run_id, param_version,
+        regime_report=regime_report,
+        health_by_strategy=health_by_strategy,
+    )
     _log(f"  Sentinel decisions: {len(approvals)}")
     for a in approvals:
         _log(f"    → {a['decision']} | {a.get('approval_id')} | {a.get('reasons', [])}")
@@ -113,7 +124,7 @@ def run_full(
         return {"run_id": run_id, "status": "DENIED", "intents": len(intents),
                 "approvals": 0, "executions": 0, "cycle_sec": round(elapsed, 2)}
 
-    # 5. Forge: execute
+    # 6. Forge: execute
     intents_by_id = {i["intent_id"]: i for i in intents}
     receipts = forge.run_forge(approvals, intents_by_id, snapshots, run_id, paper=paper)
     _log(f"  Forge receipts: {len(receipts)}")
