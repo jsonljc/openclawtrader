@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared import contracts as C
 from shared import ledger
 from shared import state_store as store
+from shared import alerting
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +320,8 @@ def run_crash_recovery(run_id: str) -> dict:
             "to_posture":   C.Posture.CAUTION,
             "reason":       f"Crash recovery: {len(anomalies)} anomalies found",
         })
+        alerting.alert("CAUTION", f"Crash recovery: posture escalated to CAUTION — {len(anomalies)} anomalies",
+                       {"from_posture": C.Posture.NORMAL, "to_posture": C.Posture.CAUTION, "anomalies": anomalies})
 
     report = {
         "anomalies": anomalies,
@@ -387,5 +390,6 @@ def run_health_check(
             "status":  overall,
             "alerts":  alerts,
         })
+        alerting.alert(overall, "; ".join(alerts), {"source": "watchtower", "alerts": alerts})
 
     return health

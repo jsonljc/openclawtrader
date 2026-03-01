@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared import contracts as C
 from shared import ledger
 from shared import state_store as store
+from shared import alerting
 
 
 def _parse_ts(ts: str | None) -> datetime | None:
@@ -102,6 +103,8 @@ def compute_posture(
                 "to_posture": new_posture,
                 "reason": f"Escalation: daily_pct={daily_pct:.2f}% dd_pct={dd_pct:.2f}%",
             })
+            alerting.alert(new_posture, f"Posture escalated to {new_posture}: daily_pct={daily_pct:.2f}% dd_pct={dd_pct:.2f}%",
+                           {"from_posture": current, "to_posture": new_posture})
             return new_posture, state
 
     # --- Recovery (cooldown + positive) ---
@@ -126,6 +129,8 @@ def compute_posture(
                 "to_posture": new_posture,
                 "reason": f"Recovery: {defensive_days:.1f} days clean, positive PnL",
             })
+            alerting.alert("RECOVERY", f"Posture recovered to {new_posture}: {defensive_days:.1f} days clean",
+                           {"from_posture": current, "to_posture": new_posture})
             return new_posture, state
         store.save_posture_state(state)
         return current, state
@@ -144,6 +149,8 @@ def compute_posture(
                 "to_posture": new_posture,
                 "reason": f"Recovery: {caution_hours:.1f}h clean, positive PnL",
             })
+            alerting.alert("RECOVERY", f"Posture recovered to {new_posture}: {caution_hours:.1f}h clean",
+                           {"from_posture": current, "to_posture": new_posture})
             return new_posture, state
         store.save_posture_state(state)
         return current, state

@@ -542,6 +542,8 @@ def execute_approval(
         "fill_latency_ms":  fill["fill_latency_ms"],
         "prng_seed":        fill["prng_seed"],
     })
+    # Phase 4: slippage calibration
+    store.update_exec_quality_slippage(intent.get("strategy_id", ""), fill["slippage_ticks"])
 
     # Build position dict for bracket placement
     position_template = {

@@ -280,3 +280,18 @@ def load_exec_quality() -> dict:
 def save_exec_quality(quality: dict) -> None:
     with _lock:
         _write(_EXEC_QUALITY_PATH, quality)
+
+
+def update_exec_quality_slippage(strategy_id: str, realized_slippage_ticks: float) -> None:
+    """Phase 4: Append realized slippage for calibration; keep last 50, avg last 20."""
+    with _lock:
+        data = _read(_EXEC_QUALITY_PATH)
+        if not isinstance(data, dict):
+            data = {}
+        rec = data.setdefault(strategy_id, {"realized_slippage_ticks": [], "avg_realized_slippage_ticks_20": 0.0})
+        ticks = rec.get("realized_slippage_ticks", [])
+        ticks.append(round(realized_slippage_ticks, 4))
+        rec["realized_slippage_ticks"] = ticks[-50:]
+        last20 = rec["realized_slippage_ticks"][-20:]
+        rec["avg_realized_slippage_ticks_20"] = round(sum(last20) / len(last20), 4) if last20 else 0.0
+        _write(_EXEC_QUALITY_PATH, data)

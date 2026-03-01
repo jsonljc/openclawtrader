@@ -42,7 +42,7 @@ import sentinel
 import forge
 import watchtower
 import posture
-from data_stub import get_all_snapshots
+from data_source import get_all_snapshots
 
 
 # ---------------------------------------------------------------------------

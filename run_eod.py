@@ -29,7 +29,7 @@ from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
-from data_stub import get_all_snapshots
+from data_source import get_all_snapshots
 
 
 def _utcnow() -> str:
