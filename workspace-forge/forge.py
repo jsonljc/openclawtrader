@@ -354,7 +354,7 @@ def execute_roll(
 ) -> dict:
     """Execute a roll: close position at current price, open same size in roll_to contract."""
     if not paper:
-        raise NotImplementedError("Live roll not implemented (Phase 4)")
+        raise NotImplementedError("Live roll via IB not yet implemented — use paper mode for rolls")
 
     # Idempotency check — same pattern as execute_approval
     idem_key = IDs.make_idempotency_key(approval["approval_id"])
@@ -428,6 +428,185 @@ def execute_roll(
 
 
 # ---------------------------------------------------------------------------
+# IB live execution — Phase 4
+# ---------------------------------------------------------------------------
+
+def _execute_approval_ib(
+    approval: dict,
+    intent: dict,
+    snapshot: dict,
+    run_id: str,
+) -> dict:
+    """
+    Execute one approved intent through IB.
+    Mirrors the 8-step protocol from execute_approval but uses IB for
+    order submission and bracket placement.
+    """
+    from ib_gateway import get_connection
+    from ib_broker import execute_market_order, place_bracket_orders
+    from ib_insync import Future
+
+    approval_id = approval["approval_id"]
+    intent_id   = approval["intent_id"]
+    exec_id     = IDs.make_execution_id()
+    idem_key    = IDs.make_idempotency_key(approval_id)
+
+    # STEP 2: Idempotency check
+    existing = _check_idempotency(idem_key)
+    if existing:
+        return {
+            "execution_id": exec_id, "approval_id": approval_id,
+            "idempotency_key": idem_key, "status": "DUPLICATE_CATCH",
+            "message": "Duplicate prevented — returning existing receipt",
+            "existing": existing,
+        }
+
+    # STEP 3: Pre-flight
+    ok, reason = _preflight(approval, snapshot)
+    if not ok:
+        ledger.append(C.EventType.ORDER_REJECTED, run_id, exec_id, {
+            "execution_id": exec_id, "approval_id": approval_id, "reason": reason,
+        })
+        return {"execution_id": exec_id, "approval_id": approval_id,
+                "status": C.ExecStatus.FAILED, "reason": reason}
+
+    # Extract order parameters
+    sizing    = approval.get("sizing_final", approval.get("sizing", {}))
+    contracts = sizing.get("contracts_allowed", intent.get("sizing", {}).get("contracts_suggested", 1))
+    side      = intent.get("side", "BUY")
+    symbol    = intent.get("symbol", "ES")
+    strategy  = store.load_strategy_registry().get(intent.get("strategy_id", ""), {})
+    use_micro = approval.get("sizing_final", {}).get("use_micro", False)
+    tick_size = strategy.get("tick_size", 0.25)
+    tick_value = (strategy.get("micro_tick_value_usd", 1.25) if use_micro
+                  else strategy.get("tick_value_usd", 12.50))
+    point_value = (strategy.get("micro_point_value_usd", 5.0) if use_micro
+                   else strategy.get("point_value_usd", 50.0))
+    fee_rt    = strategy.get("fee_per_contract_round_trip_usd", 4.62)
+    margin_per_c = (strategy.get("micro_margin_per_contract_usd", 1584.0) if use_micro
+                    else strategy.get("margin_per_contract_usd", 15840.0))
+
+    # STEP 4: Persist ORDER_SENT
+    ledger.append(C.EventType.ORDER_SENT, run_id, exec_id, {
+        "execution_id": exec_id, "approval_id": approval_id,
+        "idempotency_key": idem_key, "symbol": symbol, "side": side,
+        "contracts": contracts, "param_version": approval.get("param_version", "PV_0001"),
+        "execution_mode": "IB",
+    })
+
+    # STEP 5-6: Submit order to IB
+    ib = get_connection()
+    ib_symbol = ("MES" if use_micro and symbol == "ES" else
+                 "MNQ" if use_micro and symbol == "NQ" else symbol)
+    ib_contract = Future(ib_symbol, exchange="CME", currency="USD")
+    qualified = ib.qualifyContracts(ib_contract)
+    if qualified:
+        ib_contract = qualified[0]
+
+    fill = execute_market_order(
+        ib, ib_contract, side, contracts,
+        tick_size=tick_size, tick_value_usd=tick_value,
+        point_value_usd=point_value,
+        fee_per_contract_round_trip_usd=fee_rt,
+    )
+
+    if fill["status"] in ("REJECTED", "TIMED_OUT"):
+        ledger.append(C.EventType.ORDER_REJECTED, run_id, exec_id, {
+            "execution_id": exec_id, "approval_id": approval_id,
+            "reason": fill.get("reason", fill["status"]),
+        })
+        return {"execution_id": exec_id, "approval_id": approval_id,
+                "status": C.ExecStatus.REJECTED, "reason": fill.get("reason", fill["status"])}
+
+    contracts_filled = fill["contracts_filled"]
+    fill_price = fill["fill_price"]
+
+    # Log fill
+    fill_event_type = (C.EventType.ORDER_PARTIALLY_FILLED
+                       if fill["status"] == "PARTIALLY_FILLED"
+                       else C.EventType.ORDER_FILLED)
+    ledger.append(fill_event_type, run_id, exec_id, {
+        "execution_id": exec_id, "approval_id": approval_id,
+        "fill_price": fill_price, "contracts_filled": contracts_filled,
+        "slippage_ticks": fill["slippage_ticks"], "slippage_usd": fill["slippage_usd"],
+        "fees_usd": fill["fees_usd"], "fill_latency_ms": fill["fill_latency_ms"],
+        "execution_mode": "IB",
+    })
+    store.update_exec_quality_slippage(intent.get("strategy_id", ""), fill["slippage_ticks"])
+
+    # STEP 7: Place bracket orders via IB
+    stop_price = intent.get("stop_plan", {}).get("price", fill_price - 50)
+    tp_price = intent.get("take_profit_plan", {}).get("price", fill_price + 50)
+
+    try:
+        bracket = place_bracket_orders(
+            ib, ib_contract, fill.get("prng_seed", 0),
+            side, contracts_filled, stop_price, tp_price,
+        )
+    except Exception as exc:
+        # Emergency flatten
+        from ib_broker import execute_market_order as ib_market
+        reverse_side = "SELL" if side == "BUY" else "BUY"
+        ledger.append(C.EventType.ALERT, run_id, exec_id, {
+            "alert_type": "EMERGENCY_FLATTEN", "execution_id": exec_id,
+            "reason": f"IB bracket placement failed: {exc}",
+        })
+        ib_market(ib, ib_contract, reverse_side, contracts_filled,
+                  tick_size=tick_size, tick_value_usd=tick_value,
+                  point_value_usd=point_value, fee_per_contract_round_trip_usd=fee_rt)
+        alerting.alert("HALT", f"EMERGENCY FLATTEN: IB bracket failed for {symbol}",
+                       {"execution_id": exec_id, "reason": str(exc)})
+        return {"execution_id": exec_id, "approval_id": approval_id,
+                "status": C.ExecStatus.EMERGENCY_FLATTENED,
+                "reason": f"Emergency flatten: IB bracket failed — {exc}"}
+
+    # STEP 8: Register position
+    approval_with_meta = dict(approval)
+    approval_with_meta.update({
+        "strategy_id": intent.get("strategy_id"),
+        "symbol": symbol, "contract_month": intent.get("contract_month", ""),
+        "side": side, "stop_plan": intent.get("stop_plan", {}),
+        "take_profit_plan": intent.get("take_profit_plan", {}),
+        "margin_per_contract_usd": margin_per_c,
+        "point_value_usd": point_value,
+        "correlation_group": strategy.get("correlation_group", ""),
+    })
+
+    position = _register_position(approval_with_meta, fill, bracket, run_id)
+
+    receipt: dict[str, Any] = {
+        "execution_id": exec_id, "approval_id": approval_id,
+        "idempotency_key": idem_key,
+        "param_version": approval.get("param_version", "PV_0001"),
+        "order": {
+            "symbol": symbol, "contract_month": intent.get("contract_month", ""),
+            "side": side, "type": "MARKET",
+            "contracts_requested": contracts, "contracts_filled": contracts_filled,
+        },
+        "fill": {
+            "avg_fill_price": fill_price, "slippage_ticks": fill["slippage_ticks"],
+            "slippage_usd": fill["slippage_usd"], "fees_usd": fill["fees_usd"],
+            "fill_time_ms": fill["fill_latency_ms"],
+        },
+        "bracket": bracket,
+        "position_id": position["position_id"],
+        "status": C.ExecStatus.COMPLETE,
+        "executed_at": datetime.now(timezone.utc).isoformat(),
+        "state": C.IntentState.COMPLETE,
+        "execution_mode": "IB",
+        "prng_seed": 0,
+    }
+
+    ledger.append(C.EventType.BRACKET_CONFIRMED, run_id, exec_id, {
+        "execution_id": exec_id, "position_id": position["position_id"],
+        "approval_id": approval_id,
+        "stop": bracket["stop"], "take_profit": bracket["take_profit"],
+    })
+
+    return receipt
+
+
+# ---------------------------------------------------------------------------
 # Core execution — spec 8.4
 # ---------------------------------------------------------------------------
 
@@ -443,7 +622,7 @@ def execute_approval(
     Returns an execution receipt dict.
     """
     if not paper:
-        raise NotImplementedError("Live execution not implemented (Phase 4)")
+        return _execute_approval_ib(approval, intent, snapshot, run_id)
 
     approval_id = approval["approval_id"]
     intent_id   = approval["intent_id"]

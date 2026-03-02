@@ -352,8 +352,12 @@ def main() -> None:
         help="Paper trading mode (default: True)"
     )
     parser.add_argument(
-        "--param-version", default="PV_0001",
-        help="Parameter set version (default: PV_0001)"
+        "--no-paper", action="store_true", default=False,
+        help="Disable paper trading (use live execution via IB)"
+    )
+    parser.add_argument(
+        "--param-version", default=None,
+        help="Parameter set version (default: read from portfolio or PV_0001)"
     )
     parser.add_argument(
         "--force-signal", action="store_true", default=False,
@@ -361,24 +365,34 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Resolve param_version: CLI flag > portfolio state > default
+    if args.param_version:
+        param_version = args.param_version
+    else:
+        portfolio = store.load_portfolio()
+        param_version = portfolio.get("param_version", "PV_0001")
+
+    # Paper mode: --paper (default True) is overridden by --no-paper
+    paper = args.paper and not args.no_paper
+
     run_id = IDs.make_run_id()
 
     # System start event
     if args.mode in ("full", "recovery"):
         ledger.append(C.EventType.SYSTEM_START, run_id, run_id, {
             "mode":          args.mode,
-            "param_version": args.param_version,
-            "paper":         args.paper,
+            "param_version": param_version,
+            "paper":         paper,
         })
 
     t0 = time.perf_counter()
 
     if args.mode == "full":
-        result = run_full(run_id, args.param_version, args.paper, args.force_signal)
+        result = run_full(run_id, param_version, paper, args.force_signal)
     elif args.mode == "refresh":
-        result = run_refresh(run_id, args.param_version)
+        result = run_refresh(run_id, param_version)
     elif args.mode == "reconcile":
-        result = run_reconciliation(run_id, args.param_version, args.paper)
+        result = run_reconciliation(run_id, param_version, paper)
     elif args.mode == "recovery":
         result = run_recovery(run_id)
 

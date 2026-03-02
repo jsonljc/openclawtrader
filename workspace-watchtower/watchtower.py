@@ -16,6 +16,7 @@ Public API:
 """
 
 from __future__ import annotations
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,9 +197,21 @@ def check_execution_staleness(run_id: str) -> dict:
 def check_exchange_connectivity() -> dict:
     """
     Verify exchange connectivity.
-    Phase 1 (paper trading): always OK.
-    Phase 4: replace with real ping to exchange API.
+    IB mode: checks actual IB Gateway connection status.
+    Stub mode: always OK.
     """
+    if os.environ.get("OPENCLAW_DATA_SOURCE", "stub").strip().lower() == "ib":
+        try:
+            sys.path.insert(0, str(Path(__file__).parent.parent / "workspace-forge"))
+            from ib_gateway import is_connected
+            if is_connected():
+                return {"status": "OK", "check": "exchange_connectivity",
+                        "message": "IB Gateway connected"}
+            return {"status": "HALT", "check": "exchange_connectivity",
+                    "message": "IB Gateway not connected"}
+        except Exception as exc:
+            return {"status": "HALT", "check": "exchange_connectivity",
+                    "message": f"IB connectivity check failed: {exc}"}
     return {"status": "OK", "check": "exchange_connectivity",
             "message": "Paper mode — connectivity assumed OK"}
 
