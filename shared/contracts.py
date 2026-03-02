@@ -39,6 +39,7 @@ class EventType:
     SESSION_CHANGE          = "SESSION_CHANGE"
     MISSED_OPPORTUNITY      = "MISSED_OPPORTUNITY"
     GAP_EVENT               = "GAP_EVENT"
+    LEARNING_PROPOSAL       = "LEARNING_PROPOSAL"
 
 
 # ---------------------------------------------------------------------------

@@ -311,6 +311,41 @@ def save_exec_quality(quality: dict) -> None:
         _write(_EXEC_QUALITY_PATH, quality)
 
 
+# ---------------------------------------------------------------------------
+# Learning State — adaptive learning pipeline
+# ---------------------------------------------------------------------------
+
+_LEARNING_STATE_PATH = _DATA_DIR / "learning_state.json"
+
+
+def _default_learning_state() -> dict:
+    return {
+        "last_analysis_at": None,
+        "trade_count_at_last_apply": 0,
+        "proposals": [],
+        "applied_versions": ["PV_0001"],
+        "drift_from_baseline": {},
+        "surface_trade_counts": {},
+        "param_direction_history": {},
+    }
+
+
+def load_learning_state() -> dict:
+    data = _read(_LEARNING_STATE_PATH)
+    if data is None:
+        return _default_learning_state()
+    # Ensure all keys exist (forward compat)
+    defaults = _default_learning_state()
+    for key, val in defaults.items():
+        data.setdefault(key, val)
+    return data
+
+
+def save_learning_state(state: dict) -> None:
+    with _lock:
+        _write(_LEARNING_STATE_PATH, state)
+
+
 def update_exec_quality_slippage(strategy_id: str, realized_slippage_ticks: float) -> None:
     """Phase 4: Append realized slippage for calibration; keep last 50, avg last 20."""
     with _lock:
