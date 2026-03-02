@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # Fill wait timeout (seconds)
 FILL_TIMEOUT_SEC = 30
 
+# IB uses this as "not yet reported" sentinel for commission
+_IB_COMMISSION_SENTINEL = 1e+300
+
 
 def execute_market_order(
     ib,
@@ -138,7 +141,11 @@ def execute_market_order(
         px = fill.execution.avgPrice
         total_qty += qty
         total_cost += qty * px
-        total_commission += fill.commissionReport.commission if fill.commissionReport else 0.0
+        if fill.commissionReport:
+            comm = fill.commissionReport.commission
+            # Guard against IB's "not yet reported" sentinel (max float)
+            if 0 < comm < _IB_COMMISSION_SENTINEL:
+                total_commission += comm
 
     avg_fill_price = round(total_cost / total_qty, 4) if total_qty > 0 else 0.0
     contracts_filled = int(total_qty)
