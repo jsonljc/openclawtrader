@@ -73,12 +73,14 @@ def evaluate_strategy_health(
 
         std = statistics.stdev(pnls) if len(pnls) > 1 else 0.01
         mean = statistics.mean(pnls)
-        sharpe = (mean / std * math.sqrt(252 / 20)) if std > 0 else 0.0
+        sharpe = (mean / std * math.sqrt(252 / 30)) if std > 0 else 0.0
 
         pf = abs(sum(wins)) / abs(sum(losses)) if losses else 2.0
 
-        equity = 0.0
-        peak = 0.0
+        # Use actual portfolio equity as base for drawdown calculation
+        base_equity = store.load_portfolio()["account"]["equity_usd"]
+        equity = base_equity
+        peak = base_equity
         max_dd = 0.0
         for p in pnls:
             equity += p

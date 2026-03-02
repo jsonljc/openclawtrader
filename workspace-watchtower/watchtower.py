@@ -261,6 +261,8 @@ def detect_gap(
 def run_crash_recovery(run_id: str) -> dict:
     """
     Execute crash recovery protocol on startup.
+    Full lifecycle reconstruction: scan all events, build intent states,
+    handle non-terminal states appropriately.
     Returns recovery report with any anomalies found.
     """
     portfolio     = store.load_portfolio()
@@ -274,24 +276,40 @@ def run_crash_recovery(run_id: str) -> dict:
     if posture == C.Posture.HALT:
         actions.append("Posture remains HALT — manual operator confirmation required")
 
-    # 2. Process non-terminal intents from ledger
-    created = ledger.query(event_types=[C.EventType.INTENT_CREATED], limit=500)
-    all_terminal = {
-        e["payload"].get("intent_id")
-        for e in ledger.query(
-            event_types=[C.EventType.INTENT_DENIED, C.EventType.BRACKET_CONFIRMED,
-                         C.EventType.ORDER_REJECTED, C.EventType.ORDER_CANCELLED,
-                         C.EventType.ORDER_TIMED_OUT],
-            limit=2_000,
-        )
+    # 2. Full lifecycle reconstruction — map event types to states
+    _EVENT_TO_STATE = {
+        C.EventType.INTENT_CREATED:   C.IntentState.PROPOSED,
+        C.EventType.INTENT_DENIED:    C.IntentState.DENIED,
+        C.EventType.INTENT_DEFERRED:  C.IntentState.DEFERRED,
+        C.EventType.APPROVAL_ISSUED:  C.IntentState.APPROVED,
+        C.EventType.ORDER_SENT:       C.IntentState.SENT,
+        C.EventType.ORDER_FILLED:     C.IntentState.FILLED,
+        C.EventType.BRACKET_CONFIRMED: C.IntentState.COMPLETE,
+        C.EventType.ORDER_REJECTED:   C.IntentState.REJECTED,
+        C.EventType.ORDER_CANCELLED:  C.IntentState.CANCELLED_REMAINDER,
+        C.EventType.ORDER_TIMED_OUT:  C.IntentState.TIMED_OUT,
+    }
+    _TERMINAL_STATES = {
+        C.IntentState.DENIED, C.IntentState.COMPLETE, C.IntentState.REJECTED,
+        C.IntentState.CANCELLED_REMAINDER, C.IntentState.TIMED_OUT, C.IntentState.EXPIRED,
     }
 
-    for entry in created:
-        p        = entry.get("payload", {})
+    # Scan all events and build latest state per intent_id
+    intent_states: dict[str, str] = {}
+    all_events = ledger.query(limit=10_000)
+    for entry in all_events:
+        p = entry.get("payload", {})
         intent_id = p.get("intent_id")
-        state     = p.get("state", "")
+        if not intent_id:
+            continue
+        event_type = entry.get("event_type", "")
+        mapped_state = _EVENT_TO_STATE.get(event_type)
+        if mapped_state:
+            intent_states[intent_id] = mapped_state
 
-        if intent_id in all_terminal:
+    # Process non-terminal intents
+    for intent_id, state in intent_states.items():
+        if state in _TERMINAL_STATES:
             continue  # Already resolved
 
         if state == C.IntentState.PROPOSED:
@@ -301,6 +319,15 @@ def run_crash_recovery(run_id: str) -> dict:
         elif state == C.IntentState.APPROVED:
             actions.append(f"Re-evaluating APPROVED intent {intent_id} (market may have moved)")
             anomalies.append(f"Intent {intent_id} was APPROVED but never sent")
+        elif state == C.IntentState.SENT:
+            actions.append(f"Flagging SENT intent {intent_id} for exchange reconciliation")
+            anomalies.append(f"Intent {intent_id} was SENT but no fill/reject received")
+        elif state == C.IntentState.FILLED:
+            # FILLED but no bracket confirmed → CRITICAL: naked position
+            actions.append(f"CRITICAL: Intent {intent_id} FILLED but no bracket — naked position")
+            anomalies.append(f"Intent {intent_id} FILLED without bracket confirmation — naked position risk")
+            alerting.alert("HALT", f"CRITICAL: Naked position detected for intent {intent_id}",
+                           {"intent_id": intent_id, "state": state})
 
     # 3. Check positions vs expectations
     positions = portfolio.get("positions", [])

@@ -8,6 +8,7 @@ The ledger is never modified; only appended to.
 """
 
 from __future__ import annotations
+import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +20,10 @@ from typing import Any
 _DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", Path.home() / "openclaw-trader" / "data"))
 _LEDGER_PATH = _DATA_DIR / "ledger.jsonl"
 _lock = Lock()
+
+# Cached tail state to avoid O(n) _read_tail() on every append
+_cached_last_seq: int | None = None
+_cached_last_checksum: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -59,23 +64,37 @@ def _read_tail() -> tuple[int, str]:
 
 def append(event_type: str, run_id: str, ref_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Append one event to the ledger and return the completed entry."""
+    global _cached_last_seq, _cached_last_checksum
     _ensure_dir()
     with _lock:
-        last_seq, prev_checksum = _read_tail()
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        seq = last_seq + 1
-        checksum = _compute_checksum(prev_checksum, ts, event_type, payload)
-        entry: dict[str, Any] = {
-            "ledger_seq": seq,
-            "timestamp":  ts,
-            "event_type": event_type,
-            "run_id":     run_id,
-            "ref_id":     ref_id,
-            "payload":    payload,
-            "checksum":   checksum,
-        }
         with open(_LEDGER_PATH, "a") as fh:
-            fh.write(json.dumps(entry) + "\n")
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                # Use cached values if available, otherwise read tail
+                if _cached_last_seq is not None and _cached_last_checksum is not None:
+                    last_seq, prev_checksum = _cached_last_seq, _cached_last_checksum
+                else:
+                    last_seq, prev_checksum = _read_tail()
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+                seq = last_seq + 1
+                checksum = _compute_checksum(prev_checksum, ts, event_type, payload)
+                entry: dict[str, Any] = {
+                    "ledger_seq": seq,
+                    "timestamp":  ts,
+                    "event_type": event_type,
+                    "run_id":     run_id,
+                    "ref_id":     ref_id,
+                    "payload":    payload,
+                    "checksum":   checksum,
+                }
+                fh.write(json.dumps(entry) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+                # Update cache
+                _cached_last_seq = seq
+                _cached_last_checksum = checksum
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
         return entry
 
 

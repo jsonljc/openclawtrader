@@ -16,6 +16,7 @@ Strategy registry and parameter files live in the repo under:
 """
 
 from __future__ import annotations
+import fcntl
 import json
 import os
 from datetime import datetime, timezone
@@ -43,17 +44,38 @@ def _read(path: Path) -> Any:
     try:
         with open(path) as fh:
             return json.load(fh)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         return None
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Corrupt state file {path}: {exc}") from exc
 
 
 def _write(path: Path, data: Any) -> None:
-    """Atomic write via tmp file (POSIX rename is atomic)."""
+    """Atomic write via tmp file (POSIX rename is atomic) with fsync + backup."""
     _ensure()
     tmp = path.with_suffix(".tmp")
+    # Create .bak backup if file already exists
+    if path.exists():
+        bak = path.with_suffix(".bak")
+        try:
+            bak.write_bytes(path.read_bytes())
+        except OSError:
+            pass  # Best-effort backup
     with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2)
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
     tmp.rename(path)
+    # fsync the directory to ensure the rename is durable
+    dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +147,14 @@ def _default_portfolio() -> dict:
 
 def load_portfolio() -> dict:
     data = _read(_PORTFOLIO_PATH)
-    return data if data is not None else _default_portfolio()
+    if data is None:
+        return _default_portfolio()
+    # Validate essential keys
+    if "account" not in data or "equity_usd" not in data.get("account", {}):
+        raise RuntimeError(
+            f"Corrupt portfolio state: missing 'account' or 'equity_usd' in {_PORTFOLIO_PATH}"
+        )
+    return data
 
 
 def save_portfolio(portfolio: dict) -> None:
@@ -199,15 +228,15 @@ def _default_params() -> dict:
         "sentinel": {
             "max_risk_per_trade_pct": 1.0,
             "max_open_risk_pct": 5.0,
-            "max_daily_loss_pct": -3.0,
-            "max_portfolio_dd_pct": -15.0,
+            "max_daily_loss_pct": 3.0,
+            "max_portfolio_dd_pct": 15.0,
             "max_margin_utilization_pct": 40.0,
             "max_cluster_exposure_pct": 3.0,
             "max_instrument_exposure_pct": 2.0,
             "max_intra_cluster_corr": 0.85,
             "max_concurrent_strategies": 4,
             "max_slippage_ticks": 4,
-            "min_reward_risk_ratio": 0.8,
+            "min_reward_risk_ratio": 1.5,
             "max_intent_age_sec": 900,
             "daily_loss_caution_pct": -1.0,
             "daily_loss_defensive_pct": -1.5,

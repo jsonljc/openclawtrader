@@ -134,6 +134,11 @@ def compute_posture(
             return new_posture, state
         store.save_posture_state(state)
         return current, state
+    elif current == C.Posture.DEFENSIVE and not can_recover:
+        # Reset cooldown counter on bad days
+        state["defensive_days_clean"] = 0.0
+        store.save_posture_state(state)
+        return current, state
 
     if current == C.Posture.CAUTION and can_recover:
         caution_hours += cycle_interval_hours
@@ -152,6 +157,11 @@ def compute_posture(
             alerting.alert("RECOVERY", f"Posture recovered to {new_posture}: {caution_hours:.1f}h clean",
                            {"from_posture": current, "to_posture": new_posture})
             return new_posture, state
+        store.save_posture_state(state)
+        return current, state
+    elif current == C.Posture.CAUTION and not can_recover:
+        # Reset cooldown counter on bad days
+        state["caution_hours_clean"] = 0.0
         store.save_posture_state(state)
         return current, state
 

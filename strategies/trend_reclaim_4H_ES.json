@@ -19,9 +19,9 @@
 
   "risk_budget_pct": 0.50,
   "max_strategy_dd_pct": 8.0,
-  "expected_monthly_return_pct": 5.0,
+  "expected_monthly_return_pct": 1.5,
   "expected_max_dd_pct": 10.0,
-  "expected_sharpe": 1.2,
+  "expected_sharpe": 0.7,
   "expected_hit_rate": 0.45,
   "expected_avg_slippage_ticks": 1.0,
   "expected_trades_per_month": 8,
@@ -42,8 +42,8 @@
     "entry_condition": "price_reclaim_above_ma20",
     "adx_min": 25,
     "stop_atr_multiple": 1.5,
-    "tp_atr_multiple": 1.5,
-    "min_reward_risk": 1.0
+    "tp_atr_multiple": 2.5,
+    "min_reward_risk": 1.5
   },
 
   "status": "ACTIVE",

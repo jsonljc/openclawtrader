@@ -75,15 +75,36 @@ def run_full(
     _log(f"[FULL] {run_id}")
 
     # 1. Get market data
-    snapshots = get_all_snapshots(force_signal=force_signal)
+    try:
+        snapshots = get_all_snapshots(force_signal=force_signal)
+    except Exception as exc:
+        _log(f"  FATAL: data fetch failed: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "DATA_FETCH_ERROR", "error": str(exc),
+        })
+        return {"run_id": run_id, "status": "ERROR", "reason": f"Data fetch failed: {exc}"}
     _log(f"  Snapshots loaded: {list(snapshots.keys())}")
 
     # 2. Posture update (Phase 2: auto-escalate/recover)
-    portfolio = store.load_portfolio()
-    posture.update_posture(portfolio, param_version, run_id)
+    try:
+        portfolio = store.load_portfolio()
+        posture.update_posture(portfolio, param_version, run_id)
+    except Exception as exc:
+        _log(f"  ERROR in posture update: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "POSTURE_ERROR", "error": str(exc),
+        })
+        # Continue — posture failure shouldn't block the whole cycle
 
     # 3. Watchtower health check
-    health = watchtower.run_health_check(snapshots, run_id)
+    try:
+        health = watchtower.run_health_check(snapshots, run_id)
+    except Exception as exc:
+        _log(f"  ERROR in watchtower: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "WATCHTOWER_ERROR", "error": str(exc),
+        })
+        return {"run_id": run_id, "status": "ERROR", "reason": f"Watchtower failed: {exc}"}
     _log(f"  Watchtower: {health['status']}"
          + (f" — {health['active_alerts']}" if health["active_alerts"] else ""))
 
@@ -95,9 +116,16 @@ def run_full(
     wt_status = health["status"]
 
     # 4. C3PO: compute regime, health, emit intents
-    intents, regime_report, health_by_strategy = brain.run_brain(
-        snapshots, run_id, param_version, wt_status
-    )
+    try:
+        intents, regime_report, health_by_strategy = brain.run_brain(
+            snapshots, run_id, param_version, wt_status
+        )
+    except Exception as exc:
+        _log(f"  ERROR in brain: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "BRAIN_ERROR", "error": str(exc),
+        })
+        return {"run_id": run_id, "status": "ERROR", "reason": f"Brain failed: {exc}"}
     _log(f"  C3PO intents: {len(intents)}")
     for i in intents:
         _log(f"    → {i['intent_type']} {i.get('symbol')} {i.get('side', '')} | {i['intent_id']}")
@@ -108,11 +136,18 @@ def run_full(
                 "approvals": 0, "executions": 0, "cycle_sec": round(elapsed, 2)}
 
     # 5. Sentinel: validate + size
-    approvals = sentinel.run_sentinel(
-        intents, snapshots, run_id, param_version,
-        regime_report=regime_report,
-        health_by_strategy=health_by_strategy,
-    )
+    try:
+        approvals = sentinel.run_sentinel(
+            intents, snapshots, run_id, param_version,
+            regime_report=regime_report,
+            health_by_strategy=health_by_strategy,
+        )
+    except Exception as exc:
+        _log(f"  ERROR in sentinel: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "SENTINEL_ERROR", "error": str(exc),
+        })
+        return {"run_id": run_id, "status": "ERROR", "reason": f"Sentinel failed: {exc}"}
     _log(f"  Sentinel decisions: {len(approvals)}")
     for a in approvals:
         _log(f"    → {a['decision']} | {a.get('approval_id')} | {a.get('reasons', [])}")
@@ -126,8 +161,18 @@ def run_full(
                 "approvals": 0, "executions": 0, "cycle_sec": round(elapsed, 2)}
 
     # 6. Forge: execute
-    intents_by_id = {i["intent_id"]: i for i in intents}
-    receipts = forge.run_forge(approvals, intents_by_id, snapshots, run_id, paper=paper)
+    try:
+        intents_by_id = {i["intent_id"]: i for i in intents}
+        receipts = forge.run_forge(approvals, intents_by_id, snapshots, run_id, paper=paper)
+    except Exception as exc:
+        _log(f"  ERROR in forge: {exc}")
+        ledger.append(C.EventType.ALERT, run_id, "ORCHESTRATOR", {
+            "alert_type": "FORGE_ERROR", "error": str(exc),
+            "partial_execution": True,
+        })
+        return {"run_id": run_id, "status": "ERROR",
+                "reason": f"Forge failed (partial execution possible): {exc}",
+                "intents": len(intents), "approvals": len(approved_list)}
     _log(f"  Forge receipts: {len(receipts)}")
     for r in receipts:
         _log(f"    → {r['status']} | {r.get('execution_id')} "
@@ -165,7 +210,9 @@ def run_refresh(
     """
     _log(f"[REFRESH] {run_id}")
     snapshots = get_all_snapshots()
-    intents   = brain.run_brain(snapshots, run_id, param_version)
+    intents, regime_report, health_by_strategy = brain.run_brain(
+        snapshots, run_id, param_version, C.WatchtowerStatus.HEALTHY
+    )
     _log(f"  C3PO: {len(intents)} intents (refresh — not sent to Sentinel)")
 
     portfolio = store.load_portfolio()

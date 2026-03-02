@@ -94,7 +94,7 @@ def validate_margin(
 
     per_contract = micro_margin_per_contract if use_micro else margin_per_contract
     if per_contract <= 0:
-        return contracts  # No margin data — skip check
+        return 0  # No margin data — cannot validate, deny
 
     while contracts > 0:
         new_margin   = current_margin_used + contracts * per_contract
@@ -209,11 +209,12 @@ def _run_hard_checks(
     tick_size   = strategy.get("tick_size", 0.25)
     tick_value  = (strategy.get("micro_tick_value_usd", 1.25) if use_micro
                    else strategy.get("tick_value_usd", 12.50))
-    stop_dist   = abs(intent["stop_plan"]["price"] - intent.get("entry_plan", {}).get("price",
-                      snapshot["bars"]["1H"][-1]["c"] if snapshot.get("bars", {}).get("1H") else 0))
-    tp_dist     = abs(intent["take_profit_plan"]["price"] -
-                      intent.get("entry_plan", {}).get("price",
-                      snapshot["bars"]["1H"][-1]["c"] if snapshot.get("bars", {}).get("1H") else 0))
+    # Use intent entry price as primary source; fall back to last 1H bar close
+    intent_entry = intent.get("entry_plan", {}).get("price", 0.0)
+    bar_fallback = snapshot["bars"]["1H"][-1]["c"] if snapshot.get("bars", {}).get("1H") else 0.0
+    entry_ref = intent_entry if intent_entry else bar_fallback
+    stop_dist   = abs(entry_ref - intent["stop_plan"]["price"])
+    tp_dist     = abs(intent["take_profit_plan"]["price"] - entry_ref)
 
     stop_dist_ticks = stop_dist / tick_size if tick_size > 0 else 0
     tp_dist_ticks   = tp_dist   / tick_size if tick_size > 0 else 0
@@ -241,15 +242,14 @@ def _run_hard_checks(
     max_open  = sp.get("max_open_risk_pct", 5.0) * pm
     check("max_open_risk", round(open_pct, 4), max_open, "%", open_pct <= max_open)
 
-    # Rule 3: Daily loss cap
+    # Rule 3: Daily loss cap (max_daily_loss_pct is positive; daily_pnl is negative when losing)
     daily_pnl = portfolio.get("pnl", {}).get("total_today_pct", 0.0)
-    max_daily = sp.get("max_daily_loss_pct", -3.0)
-    check("daily_loss_cap", round(daily_pnl, 4), max_daily, "%", daily_pnl >= max_daily)
+    max_daily = sp.get("max_daily_loss_pct", 3.0)
+    check("daily_loss_cap", round(daily_pnl, 4), -abs(max_daily), "%", daily_pnl >= -abs(max_daily))
 
-    # Rule 4: Portfolio drawdown cap
+    # Rule 4: Portfolio drawdown cap (max_portfolio_dd_pct is positive; dd_pct is positive)
     dd_pct  = portfolio.get("pnl", {}).get("portfolio_dd_pct", 0.0)
-    max_dd  = sp.get("max_portfolio_dd_pct", -15.0)
-    # dd_pct is stored as positive number; limit is positive threshold
+    max_dd  = sp.get("max_portfolio_dd_pct", 15.0)
     check("portfolio_dd_cap", round(dd_pct, 4), abs(max_dd), "%", dd_pct <= abs(max_dd))
 
     # Rule 5: Projected margin utilization
@@ -337,7 +337,8 @@ def _run_hard_checks(
 # Exit / flatten fast-path (always allowed)
 # ---------------------------------------------------------------------------
 
-def _approve_exit(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict:
+def _approve_exit(intent: dict, approval_id: str, run_id: str, sp: dict,
+                   posture: str = "NORMAL") -> dict:
     return {
         "approval_id":     approval_id,
         "intent_id":       intent["intent_id"],
@@ -346,7 +347,7 @@ def _approve_exit(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict
         "run_id":          run_id,
         "param_version":   intent.get("param_version", "PV_0001"),
         "decision":        C.RiskDecision.APPROVE,
-        "sentinel_posture": "NORMAL",
+        "sentinel_posture": posture,
         "intent_type":     intent.get("intent_type"),
         "side":            intent.get("side"),
         "sizing_final": {
@@ -368,7 +369,8 @@ def _approve_exit(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict
     }
 
 
-def _approve_roll(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict:
+def _approve_roll(intent: dict, approval_id: str, run_id: str, sp: dict,
+                   posture: str = "NORMAL") -> dict:
     """Phase 3: Approve roll intent — same contracts, new contract month."""
     contracts = intent.get("current_contracts", 1)
     return {
@@ -379,7 +381,7 @@ def _approve_roll(intent: dict, approval_id: str, run_id: str, sp: dict) -> dict
         "run_id":          run_id,
         "param_version":   intent.get("param_version", "PV_0001"),
         "decision":        C.RiskDecision.APPROVE,
-        "sentinel_posture": "NORMAL",
+        "sentinel_posture": posture,
         "intent_type":     C.IntentType.ROLL,
         "side":            intent.get("side"),
         "position_id":     intent.get("position_id"),
@@ -433,13 +435,38 @@ def evaluate_intent(
 
     # --- EXIT / FLATTEN / SCALE_OUT: always allowed ---
     if intent_type in C.IntentType.RELAXED:
-        decision = _approve_exit(intent, approval_id, run_id, sp)
+        decision = _approve_exit(intent, approval_id, run_id, sp, posture=posture)
         ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, decision)
         return decision
 
-    # --- ROLL: approve same size (Phase 3) ---
+    # --- ROLL: approve with posture/margin checks (Phase 3) ---
     if intent_type == C.IntentType.ROLL:
-        decision = _approve_roll(intent, approval_id, run_id, sp)
+        # HALT posture → deny roll (force close instead)
+        if posture == C.Posture.HALT:
+            reason = "Posture HALT blocks roll — position should be closed instead"
+            deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
+            ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
+            return deny
+        # Margin validation for roll
+        roll_strategy = store.load_strategy_registry().get(strategy_id, {})
+        contracts = intent.get("current_contracts", 1)
+        use_micro = False
+        margin_ok = validate_margin(
+            contracts=contracts,
+            use_micro=use_micro,
+            margin_per_contract=roll_strategy.get("margin_per_contract_usd", 15840.0),
+            micro_margin_per_contract=roll_strategy.get("micro_margin_per_contract_usd", 1584.0),
+            current_margin_used=portfolio["account"].get("margin_used_usd", 0.0),
+            equity=portfolio["account"]["equity_usd"],
+            posture=posture,
+            sp=sp,
+        )
+        if margin_ok == 0:
+            reason = "Margin insufficient for roll — deny"
+            deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
+            ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
+            return deny
+        decision = _approve_roll(intent, approval_id, run_id, sp, posture=posture)
         ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, decision)
         return decision
 
@@ -447,14 +474,14 @@ def evaluate_intent(
     if posture in (C.Posture.DEFENSIVE, C.Posture.HALT):
         if intent_type == C.IntentType.ENTRY:
             reason = f"Posture {posture} blocks new entries"
-            deny   = _deny(intent, approval_id, run_id, reason, sp)
+            deny   = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
             ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
             return deny
 
     # --- Idempotency checks ---
     idem_ok, idem_reason = check_idempotency(intent, portfolio)
     if not idem_ok:
-        deny = _deny(intent, approval_id, run_id, idem_reason, sp)
+        deny = _deny(intent, approval_id, run_id, idem_reason, sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 
@@ -462,7 +489,7 @@ def evaluate_intent(
     registry = store.load_strategy_registry()
     strategy = registry.get(strategy_id, {})
     if not strategy:
-        deny = _deny(intent, approval_id, run_id, f"Unknown strategy_id: {strategy_id}", sp)
+        deny = _deny(intent, approval_id, run_id, f"Unknown strategy_id: {strategy_id}", sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 
@@ -507,11 +534,14 @@ def evaluate_intent(
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)
-    entry_price = snapshot["bars"]["1H"][-1]["c"] if snapshot.get("bars", {}).get("1H") else 0.0
+    # Use intent entry price as primary source; fall back to last 1H bar close
+    intent_entry_price = intent.get("entry_plan", {}).get("price", 0.0)
+    bar_close_fallback = snapshot["bars"]["1H"][-1]["c"] if snapshot.get("bars", {}).get("1H") else 0.0
+    entry_price = intent_entry_price if intent_entry_price else bar_close_fallback
     stop_dist   = abs(entry_price - stop_price)
 
     if stop_dist <= 0:
-        deny = _deny(intent, approval_id, run_id, "Stop distance is zero", sp)
+        deny = _deny(intent, approval_id, run_id, "Stop distance is zero", sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 
@@ -524,7 +554,7 @@ def evaluate_intent(
             micro_point_value_usd=strategy.get("micro_point_value_usd", 5.0),
         )
     except ValueError as exc:
-        deny = _deny(intent, approval_id, run_id, str(exc), sp)
+        deny = _deny(intent, approval_id, run_id, str(exc), sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 
@@ -540,7 +570,7 @@ def evaluate_intent(
         sp=sp,
     )
     if contracts == 0:
-        deny = _deny(intent, approval_id, run_id, "Margin limit exceeded after reduction", sp)
+        deny = _deny(intent, approval_id, run_id, "Margin limit exceeded after reduction", sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 
@@ -555,7 +585,7 @@ def evaluate_intent(
         _track_missed_opportunity(intent, "; ".join(fail_reasons), posture, run_id,
                                   snapshot=snapshot, portfolio=portfolio)
 
-        deny = _deny(intent, approval_id, run_id, "; ".join(fail_reasons), sp)
+        deny = _deny(intent, approval_id, run_id, "; ".join(fail_reasons), sp, posture=posture)
         deny["checks"] = {"passed": passed, "failed": failed, "warnings": warnings}
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
@@ -687,7 +717,8 @@ def _track_missed_opportunity(
 # Deny helper
 # ---------------------------------------------------------------------------
 
-def _deny(intent: dict, approval_id: str, run_id: str, reason: str, sp: dict) -> dict:
+def _deny(intent: dict, approval_id: str, run_id: str, reason: str, sp: dict,
+          posture: str = "NORMAL") -> dict:
     return {
         "approval_id":     approval_id,
         "intent_id":       intent.get("intent_id"),
@@ -696,7 +727,7 @@ def _deny(intent: dict, approval_id: str, run_id: str, reason: str, sp: dict) ->
         "run_id":          run_id,
         "param_version":   intent.get("param_version", "PV_0001"),
         "decision":        C.RiskDecision.DENY,
-        "sentinel_posture": "NORMAL",
+        "sentinel_posture": posture,
         "intent_type":     intent.get("intent_type"),
         "side":            intent.get("side"),
         "stop_plan":       intent.get("stop_plan", {}),

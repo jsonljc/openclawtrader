@@ -104,22 +104,22 @@ class Posture:
     DEFENSIVE = "DEFENSIVE"
     HALT      = "HALT"
 
-    ORDER: list[str] = [NORMAL, CAUTION, DEFENSIVE, HALT]
+    ORDER: tuple[str, ...] = (NORMAL, CAUTION, DEFENSIVE, HALT)
 
     @staticmethod
     def escalate(current: str, target: str) -> str:
         """Return the higher (more conservative) of current and target."""
         order = Posture.ORDER
-        ci = order.index(current) if current in order else 0
-        ti = order.index(target) if target in order else 0
+        ci = order.index(current) if current in order else len(order) - 1
+        ti = order.index(target) if target in order else len(order) - 1
         return order[max(ci, ti)]
 
     @staticmethod
     def is_at_least(posture: str, level: str) -> bool:
         """True if posture is >= level (more restrictive)."""
         order = Posture.ORDER
-        pi = order.index(posture) if posture in order else 0
-        li = order.index(level) if level in order else 0
+        pi = order.index(posture) if posture in order else len(order) - 1
+        li = order.index(level) if level in order else len(order) - 1
         return pi >= li
 
 

@@ -61,6 +61,7 @@ def _check_gates(
     posture: str,
     wt_status: str,
     run_id: str,
+    regime: dict | None = None,
 ) -> tuple[bool, list[str]]:
     """
     Check all 9 proposal gates.
@@ -83,6 +84,12 @@ def _check_gates(
     if health.get("action") == C.HealthAction.DISABLE:
         failures.append("Gate 3: strategy health action=DISABLE")
 
+    # Gate 3b: Regime score too low
+    if regime and regime.get("effective_regime_score", 1.0) < 0.30:
+        failures.append(
+            f"Gate 3b: effective_regime_score={regime['effective_regime_score']:.2f} < 0.30"
+        )
+
     # Gate 4: Sentinel posture allows entries
     if posture in (C.Posture.DEFENSIVE, C.Posture.HALT):
         failures.append(f"Gate 4: posture={posture} blocks entries")
@@ -92,11 +99,7 @@ def _check_gates(
     if session in (C.SessionState.CLOSED, C.SessionState.POST_CLOSE, C.SessionState.PRE_OPEN):
         failures.append(f"Gate 5: session={session} — no new entries")
 
-    # Gate 6: Days to expiry > roll window
-    days_exp = snapshot.get("contract", {}).get("days_to_expiry", 999)
-    roll_win  = strategy.get("roll_days_before_expiry", 5)
-    if days_exp <= roll_win:
-        failures.append(f"Gate 6: days_to_expiry={days_exp} <= roll_window={roll_win}")
+    # Gate 6: (Removed — rollover is handled before gate check)
 
     # Gate 7: Watchtower not HALT
     if wt_status == C.WatchtowerStatus.HALT:
@@ -150,29 +153,29 @@ def _evaluate_trend_reclaim_4H(
 
     # LONG: price above MA20, ADX confirming trend, positive slope
     if price > ma20 and adx >= adx_min and ma_slope > 0:
-        stop_dist = atr_1h * stop_mult
-        tp_dist   = atr_1h * tp_mult
+        stop_dist = atr_4h * stop_mult
+        tp_dist   = atr_4h * tp_mult
         return {
             "side":       "BUY",
             "stop_price": round(price - stop_dist, 2),
             "tp_price":   round(price + tp_dist, 2),
             "stop_dist":  round(stop_dist, 4),
             "tp_dist":    round(tp_dist, 4),
-            "atr_used":   atr_1h,
+            "atr_used":   atr_4h,
             "direction":  "LONG",
         }
 
     # SHORT: price below MA20, ADX confirming trend, negative slope
     if price < ma20 and adx >= adx_min and ma_slope < 0:
-        stop_dist = atr_1h * stop_mult
-        tp_dist   = atr_1h * tp_mult
+        stop_dist = atr_4h * stop_mult
+        tp_dist   = atr_4h * tp_mult
         return {
             "side":       "SELL",
             "stop_price": round(price + stop_dist, 2),
             "tp_price":   round(price - tp_dist, 2),
             "stop_dist":  round(stop_dist, 4),
             "tp_dist":    round(tp_dist, 4),
-            "atr_used":   atr_1h,
+            "atr_used":   atr_4h,
             "direction":  "SHORT",
         }
 
@@ -232,12 +235,12 @@ def _suggest_sizing(
         use_micro  = contracts > 0
 
     actual_pv     = micro_pv if use_micro else point_val
-    risk_at_stop  = stop_dist_pts * actual_pv * max(1, contracts)
+    risk_at_stop  = stop_dist_pts * actual_pv * contracts if contracts > 0 else 0.0
     risk_pct      = risk_at_stop / equity * 100.0 if equity > 0 else 0.0
 
     return {
         "risk_per_contract_usd":   round(stop_dist_pts * actual_pv, 2),
-        "contracts_suggested":     max(1, contracts),
+        "contracts_suggested":     contracts,
         "use_micro":               use_micro,
         "risk_pct_suggested":      round(base_risk_pct, 4),
         "risk_pct_after_health":   round(base_risk_pct * regime_mod * health_mod * session_mod * incub_mod, 4),
@@ -421,14 +424,7 @@ def run_brain(
         ledger.append(C.EventType.HEALTH_COMPUTED, run_id,
                       f"HLT_{strategy_id}", health)
 
-        # Gate check
-        gates_ok, gate_failures = _check_gates(
-            strategy, health, snap, portfolio, posture, watchtower_status, run_id
-        )
-        if not gates_ok:
-            continue  # Log failure reason without intent
-
-        # Check for rollover
+        # Check for rollover BEFORE gate check (rollover is independent of gates)
         days_exp = snap.get("contract", {}).get("days_to_expiry", 999)
         roll_win = strategy.get("roll_days_before_expiry", 5)
         if days_exp <= roll_win:
@@ -438,6 +434,14 @@ def run_brain(
                     ledger.append(C.EventType.INTENT_CREATED, run_id, roll["intent_id"], roll)
                     intents.append(roll)
             continue  # No new entries when rolling
+
+        # Gate check
+        gates_ok, gate_failures = _check_gates(
+            strategy, health, snap, portfolio, posture, watchtower_status, run_id,
+            regime=regime,
+        )
+        if not gates_ok:
+            continue  # Log failure reason without intent
 
         # Evaluate signal
         handler = _SIGNAL_HANDLERS.get(strategy_id)

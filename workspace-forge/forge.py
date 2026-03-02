@@ -23,6 +23,7 @@ from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
+from shared import alerting
 from paper_broker import simulate_market_fill, check_bracket_triggers
 from fees_model import exit_fee_usd
 from slippage_model import estimate_slippage_ticks, slippage_usd
@@ -354,6 +355,20 @@ def execute_roll(
     """Execute a roll: close position at current price, open same size in roll_to contract."""
     if not paper:
         raise NotImplementedError("Live roll not implemented (Phase 4)")
+
+    # Idempotency check — same pattern as execute_approval
+    idem_key = IDs.make_idempotency_key(approval["approval_id"])
+    existing = _check_idempotency(idem_key)
+    if existing:
+        return {
+            "execution_id":    IDs.make_execution_id(),
+            "approval_id":     approval["approval_id"],
+            "idempotency_key": idem_key,
+            "status":          "DUPLICATE_CATCH",
+            "message":         "Duplicate roll prevented — returning existing receipt",
+            "existing":        existing,
+        }
+
     portfolio = store.load_portfolio()
     position_id = approval.get("position_id") or intent.get("position_id")
     pos = next((p for p in portfolio["positions"] if p.get("position_id") == position_id), None)
@@ -384,6 +399,8 @@ def execute_roll(
         ledger.append(C.EventType.ALERT, run_id, approval["approval_id"], {
             "alert_type": "ROLL_BRACKET_FAILED", "reason": "Bracket placement failed after roll close",
         })
+        alerting.alert("HALT", f"ROLL BRACKET FAILED for {symbol} — naked position",
+                       {"approval_id": approval["approval_id"]})
         return {"execution_id": IDs.make_execution_id(), "approval_id": approval["approval_id"],
                 "status": C.ExecStatus.EMERGENCY_FLATTENED, "reason": "Bracket failed after roll"}
     approval_roll = dict(approval)
@@ -566,11 +583,35 @@ def execute_approval(
 
     if bracket is None:
         # Emergency flatten — spec 8.4 STEP 7c / 8.7 Invariant 3
+        # Actually close the position by simulating a reverse fill
         ledger.append(C.EventType.ALERT, run_id, exec_id, {
             "alert_type":    "EMERGENCY_FLATTEN",
             "execution_id":  exec_id,
             "reason":        f"Stop placement failed: {bracket_err}",
         })
+        # Close the filled position immediately
+        reverse_side = "SELL" if side == "BUY" else "BUY"
+        reverse_fill = simulate_market_fill(
+            side=reverse_side,
+            price=fill_price,
+            tick_size=tick_size,
+            tick_value_usd=tick_value,
+            point_value_usd=point_value,
+            contracts=contracts_filled,
+            fee_per_contract_round_trip_usd=fee_rt,
+            vol_pct=vol_pct,
+            session=session,
+            avg_book_depth=depth,
+            prng_seed=prng_seed + 1,
+        )
+        # Log the emergency close
+        ledger.append(C.EventType.POSITION_CLOSED, run_id, exec_id, {
+            "execution_id":  exec_id,
+            "reason":        "EMERGENCY_FLATTEN",
+            "reverse_fill":  reverse_fill["fill_price"] if reverse_fill.get("status") != "REJECTED" else None,
+        })
+        alerting.alert("HALT", f"EMERGENCY FLATTEN: bracket failed for {symbol} — position closed",
+                       {"execution_id": exec_id, "reason": bracket_err})
         return {
             "execution_id": exec_id,
             "approval_id":  approval_id,

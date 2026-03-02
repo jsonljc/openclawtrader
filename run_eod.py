@@ -24,12 +24,14 @@ from pathlib import Path
 _ROOT = Path(__file__).parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "workspace-c3po"))
+sys.path.insert(0, str(_ROOT / "workspace-forge"))
 
 from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 from data_source import get_all_snapshots
+import forge
 
 
 def _utcnow() -> str:
@@ -158,8 +160,13 @@ def evaluate_overnight_hold(
 # Apply overnight actions to portfolio
 # ---------------------------------------------------------------------------
 
-def _apply_overnight_actions(portfolio: dict, actions: list[dict]) -> int:
-    """Apply TIGHTEN_STOP and MOVE_STOP_TO_BREAKEVEN actions in-place."""
+def _apply_overnight_actions(
+    portfolio: dict,
+    actions: list[dict],
+    snapshots: dict[str, dict],
+    run_id: str,
+) -> int:
+    """Apply overnight actions: TIGHTEN_STOP, MOVE_STOP_TO_BREAKEVEN, FLATTEN, PARTIAL_EXIT."""
     applied = 0
     pos_map = {p["position_id"]: p for p in portfolio.get("positions", [])}
     for a in actions:
@@ -171,6 +178,38 @@ def _apply_overnight_actions(portfolio: dict, actions: list[dict]) -> int:
             if new_stop is not None:
                 pos["stop_price"] = new_stop
                 applied += 1
+        elif a["action"] == "FLATTEN":
+            # Close the entire position
+            sym = pos.get("symbol", "")
+            snap = snapshots.get(sym, {})
+            exit_price = snap.get("indicators", {}).get("last_price", pos.get("current_price", pos["entry_price"]))
+            forge.close_position(pos, exit_price, "OVERNIGHT_FLATTEN", run_id)
+            ledger.append(C.EventType.ALERT, run_id, pos["position_id"], {
+                "alert_type": "OVERNIGHT_FLATTEN",
+                "position_id": pos["position_id"],
+                "reason": a.get("reason", ""),
+            })
+            applied += 1
+        elif a["action"] == "PARTIAL_EXIT":
+            # Close a percentage of the position
+            exit_pct = a.get("exit_pct", 50) / 100.0
+            contracts = pos.get("contracts", 1)
+            contracts_to_close = max(1, int(contracts * exit_pct))
+            if contracts_to_close >= contracts:
+                # Close all
+                sym = pos.get("symbol", "")
+                snap = snapshots.get(sym, {})
+                exit_price = snap.get("indicators", {}).get("last_price",
+                    pos.get("current_price", pos["entry_price"]))
+                forge.close_position(pos, exit_price, "OVERNIGHT_PARTIAL_EXIT", run_id)
+            else:
+                # Reduce position size in-place
+                pos["contracts"] = contracts - contracts_to_close
+                # Recalculate risk at stop
+                pv = pos.get("point_value_usd", 50.0)
+                stop_dist = abs(pos.get("entry_price", 0) - pos.get("stop_price", 0))
+                pos["risk_at_stop_usd"] = round(stop_dist * pv * pos["contracts"], 2)
+            applied += 1
     return applied
 
 
@@ -223,7 +262,7 @@ def run_eod(dry_run: bool = False) -> dict:
 
     stops_adjusted = 0
     if not dry_run:
-        stops_adjusted = _apply_overnight_actions(portfolio, overnight_actions)
+        stops_adjusted = _apply_overnight_actions(portfolio, overnight_actions, snapshots, run_id)
 
     # 3. Increment bars_held
     for pos in positions:
