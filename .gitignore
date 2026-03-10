@@ -1,9 +1,5 @@
-# Runtime state (gitignored)
-data/ledger/*.jsonl
-data/ledger/*.json
-data/state/*
-!data/ledger/.gitkeep
-!data/state/.gitkeep
+# Runtime data
+data/
 
 # Python
 __pycache__/
