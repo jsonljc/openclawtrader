@@ -219,8 +219,16 @@ def run_intraday_cycle(
     _log(f"  Session: {session} (modifier={session_report['modifier']}, "
          f"minutes_in={session_report['minutes_into_session']})")
 
-    if not session_report["is_rth"]:
+    if not session_report["is_rth"] and not force_signal:
         return {"run_id": run_id, "status": "OUTSIDE_RTH", "session": session}
+    if force_signal and not session_report["is_rth"]:
+        # Override session for dev/test — simulate MORNING_DRIVE
+        session_report["is_rth"] = True
+        session_report["session"] = "MORNING_DRIVE"
+        session_report["modifier"] = 1.0
+        session_report["minutes_into_session"] = 60
+        session = "MORNING_DRIVE"
+        _log("  [FORCE] Overriding session to MORNING_DRIVE for testing")
 
     # 2. Market data
     try:
