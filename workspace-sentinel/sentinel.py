@@ -26,6 +26,124 @@ from shared import state_store as store
 sys.path.insert(0, str(Path(__file__).parent.parent / "workspace-forge"))
 from slippage_model import estimate_slippage_ticks, compute_ev_ratio
 
+# Add c3po path for session model
+sys.path.insert(0, str(Path(__file__).parent.parent / "workspace-c3po"))
+
+
+# ---------------------------------------------------------------------------
+# Intraday risk helpers (Rules 14-17)
+# ---------------------------------------------------------------------------
+
+def _check_session_gate(intent: dict, snapshot: dict) -> tuple[bool, str]:
+    """Rule 14: No new entries in EXTENDED or first 2 min of US_OPEN."""
+    try:
+        from session import detect_intra_session, minutes_into_session, IntraSession
+        now_utc = datetime.now(timezone.utc)
+        session = detect_intra_session(now_utc)
+        mins_in = minutes_into_session(now_utc)
+
+        if session in IntraSession.SUPPRESSED:
+            return False, f"Session gate: {session} — entries suppressed"
+        if session == IntraSession.US_OPEN and mins_in < 2:
+            return False, f"Session gate: first {mins_in} min of US_OPEN — wait 2 min"
+    except ImportError:
+        pass  # Session module not available — allow
+    return True, ""
+
+
+def _check_cooldown(intent: dict) -> tuple[bool, str]:
+    """Rule 15: 15 min cooldown after stop-out for same setup family."""
+    setup_family = intent.get("setup_metadata", {}).get("setup_family", "")
+    if not setup_family:
+        return True, ""  # Not an intraday setup — skip
+
+    now = datetime.now(timezone.utc)
+    cooldown_sec = 15 * 60  # 15 minutes
+
+    for entry in ledger.query(event_types=[C.EventType.POSITION_CLOSED], limit=50):
+        p = entry.get("payload", {})
+        if p.get("close_reason") not in ("STOP_HIT", "STOP_LOSS"):
+            continue
+        if p.get("setup_family", "") != setup_family:
+            continue
+        ts_str = entry.get("timestamp", "")
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        age = (now - ts).total_seconds()
+        if age < cooldown_sec:
+            return False, f"Cooldown: {setup_family} stopped out {age:.0f}s ago (< {cooldown_sec}s)"
+
+    return True, ""
+
+
+def _check_daily_trade_count() -> tuple[bool, str]:
+    """Rule 16: Max 8 round-trips per day."""
+    max_daily_trades = 8
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    count = 0
+    for entry in ledger.query(event_types=[C.EventType.ORDER_FILLED], limit=500):
+        ts = entry.get("timestamp", "")
+        if ts[:10] == today:
+            count += 1
+    if count >= max_daily_trades * 2:  # Each RT has entry + exit fill
+        return False, f"Daily trade limit: {count // 2} round-trips today (max {max_daily_trades})"
+    return True, ""
+
+
+def _check_loss_velocity() -> tuple[bool, str]:
+    """Rule 17: 3+ losses in 60 min → HALT for 2 hours."""
+    now = datetime.now(timezone.utc)
+    loss_count = 0
+    window_sec = 3600  # 60 minutes
+
+    for entry in ledger.query(event_types=[C.EventType.POSITION_CLOSED], limit=100):
+        ts_str = entry.get("timestamp", "")
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        age = (now - ts).total_seconds()
+        if age > window_sec:
+            break
+        p = entry.get("payload", {})
+        if p.get("realized_pnl", 0) < 0:
+            loss_count += 1
+
+    if loss_count >= 3:
+        return False, f"Loss velocity: {loss_count} losses in last 60 min — HALT 2 hours"
+    return True, ""
+
+
+def _check_max_concurrent_positions(portfolio: dict, sp: dict) -> tuple[bool, str]:
+    """Rule 18: Max concurrent positions."""
+    max_pos = sp.get("max_concurrent_positions", 4)
+    current = len(portfolio.get("positions", []))
+    if current >= max_pos:
+        return False, f"Max concurrent positions ({max_pos}) reached — currently {current}"
+    return True, ""
+
+
+def _compute_streak_modifier() -> float:
+    """
+    Streak modifier: 3+ consecutive losses = 0.7x, 5+ = 0.5x.
+    Never increases above 1.0.
+    """
+    consecutive_losses = 0
+    for entry in ledger.query(event_types=[C.EventType.POSITION_CLOSED], limit=20):
+        p = entry.get("payload", {})
+        if p.get("realized_pnl", 0) < 0:
+            consecutive_losses += 1
+        else:
+            break  # Streak broken by a win
+
+    if consecutive_losses >= 5:
+        return 0.5
+    if consecutive_losses >= 3:
+        return 0.7
+    return 1.0
+
 
 # ---------------------------------------------------------------------------
 # Sizing pipeline — spec Section 10
@@ -330,6 +448,29 @@ def _run_hard_checks(
     ev_min = 0.5
     check("slippage_ev", round(ev, 4), ev_min, "", ev >= ev_min)
 
+    # --- Rules 14-17: Intraday risk limits ---
+    # Only apply to intraday strategies (5m timeframe)
+    if strategy.get("timeframe") == "5m":
+        # Rule 14: Session gate
+        sess_ok, sess_reason = _check_session_gate(intent, snapshot)
+        if not sess_ok:
+            failed.append({"rule": "session_gate", "value": sess_reason, "limit": "", "unit": ""})
+
+        # Rule 15: Cooldown after stop-out
+        cool_ok, cool_reason = _check_cooldown(intent)
+        if not cool_ok:
+            failed.append({"rule": "setup_cooldown", "value": cool_reason, "limit": "", "unit": ""})
+
+        # Rule 16: Daily trade count
+        trade_ok, trade_reason = _check_daily_trade_count()
+        if not trade_ok:
+            failed.append({"rule": "daily_trade_count", "value": trade_reason, "limit": "", "unit": ""})
+
+        # Rule 17: Loss velocity
+        vel_ok, vel_reason = _check_loss_velocity()
+        if not vel_ok:
+            failed.append({"rule": "loss_velocity", "value": vel_reason, "limit": "", "unit": ""})
+
     return passed, failed, warnings
 
 
@@ -478,6 +619,13 @@ def evaluate_intent(
             ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
             return deny
 
+    # --- Rule 18: Max concurrent positions ---
+    pos_ok, pos_reason = _check_max_concurrent_positions(portfolio, sp)
+    if not pos_ok:
+        deny = _deny(intent, approval_id, run_id, pos_reason, sp, posture=posture)
+        ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
+        return deny
+
     # --- Idempotency checks ---
     idem_ok, idem_reason = check_idempotency(intent, portfolio)
     if not idem_ok:
@@ -521,16 +669,48 @@ def evaluate_intent(
         C.Posture.HALT:      0.0,
     }.get(posture, 1.0)
 
-    # Session modifier
-    session = snapshot.get("session_state", C.SessionState.CORE)
-    session_mod = sizing.get("session_modifier_extended", 0.5) \
-                  if session == C.SessionState.EXTENDED else 1.0
+    # Session modifier — use intraday session model for 5m strategies
+    if strategy.get("timeframe") == "5m":
+        try:
+            from session import detect_intra_session, get_session_modifier
+            intra_session = detect_intra_session()
+            session_mod = get_session_modifier(intra_session)
+        except ImportError:
+            session_mod = 1.0
+    else:
+        session = snapshot.get("session_state", C.SessionState.CORE)
+        session_mod = sizing.get("session_modifier_extended", 0.5) \
+                      if session == C.SessionState.EXTENDED else 1.0
+
+    # Streak modifier — reduce size after consecutive losses
+    streak_mod = _compute_streak_modifier()
+
+    # Volatility scalar — APEX Section 6
+    # If current ATR > 1.5× the 20-period ATR average, reduce size by inverse ratio
+    vol_scalar = 1.0
+    atr_current = snapshot.get("indicators", {}).get("atr_14_1H", 0)
+    bars_1h = snapshot.get("bars", {}).get("1H", [])
+    if len(bars_1h) >= 20 and atr_current > 0:
+        # Compute ATR average from recent 1H bars using simple high-low range as proxy
+        recent_ranges = []
+        for b in bars_1h[-20:]:
+            h = b.get("h", b.get("high", 0))
+            l = b.get("l", b.get("low", 0))
+            if h > 0 and l > 0:
+                recent_ranges.append(h - l)
+        if recent_ranges:
+            atr_20_avg = sum(recent_ranges) / len(recent_ranges)
+            if atr_20_avg > 0:
+                ratio = atr_current / atr_20_avg
+                if ratio > 1.5:
+                    vol_scalar = round(1.0 / ratio, 4)
+                    vol_scalar = max(vol_scalar, 0.25)  # floor at 25%
 
     # Incubation modifier
     incub = strategy.get("incubation", {})
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
-    final_risk_usd = base_risk_usd * regime_mod * health_mod * posture_mod * session_mod * incub_mod
+    final_risk_usd = base_risk_usd * regime_mod * health_mod * posture_mod * session_mod * streak_mod * vol_scalar * incub_mod
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)
@@ -631,6 +811,11 @@ def evaluate_intent(
         "approved_at": datetime.now(timezone.utc).isoformat(),
         "state":       C.IntentState.APPROVED,
     }
+    # Pass through scale-out plan and max_hold_bars from intent
+    if intent.get("scale_out_plan"):
+        approval["scale_out_plan"] = intent["scale_out_plan"]
+    if intent.get("max_hold_bars"):
+        approval["max_hold_bars"] = intent["max_hold_bars"]
 
     ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, approval)
     return approval

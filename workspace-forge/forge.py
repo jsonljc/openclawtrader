@@ -172,6 +172,20 @@ def _register_position(
     total_margin = margin_req * contracts_filled
     pos_id = IDs.make_position_id()
 
+    # Scale-out plan from approval/intent
+    raw_scale_out = approval.get("scale_out_plan")
+    scale_out_plan = None
+    if raw_scale_out:
+        scale_out_plan = {
+            "t1_pct": raw_scale_out.get("t1_pct", 50),
+            "t1_price": raw_scale_out.get("t1_price"),
+            "t2_price": raw_scale_out.get("t2_price"),
+            "t1_filled": False,
+            "be_stop_active": False,
+            "trailing_stop": None,
+            "trailing_atr_multiple": raw_scale_out.get("trailing_atr_multiple", 1.5),
+        }
+
     position: dict[str, Any] = {
         "position_id":       pos_id,
         "symbol":            symbol,
@@ -179,6 +193,7 @@ def _register_position(
         "strategy_id":       strategy_id,
         "side":              position_side,
         "contracts":         contracts_filled,
+        "original_contracts": contracts_filled,
         "entry_price":       entry_price,
         "current_price":     entry_price,
         "stop_price":        stop_price,
@@ -191,6 +206,7 @@ def _register_position(
         "bars_held":         0,
         "correlation_group": correlation_group,
         "point_value_usd":   point_value,
+        "scale_out_plan":    scale_out_plan,
         "bracket_status": {
             "stop_order_id":  bracket["stop"]["order_id"],
             "stop_status":    "ACTIVE",
@@ -234,6 +250,170 @@ def _register_position(
 
 
 # ---------------------------------------------------------------------------
+# Partial close — scale-out T1/T2/trailing stop
+# ---------------------------------------------------------------------------
+
+def partial_close_position(
+    position: dict,
+    exit_price: float,
+    contracts_to_close: int,
+    trigger: str,
+    run_id: str,
+) -> dict:
+    """
+    Close a portion of a position (scale-out). Updates position in-place
+    within the portfolio, adjusts margin/heat, and emits POSITION_PARTIALLY_CLOSED.
+    Returns a close record for the partial exit.
+    """
+    portfolio = store.load_portfolio()
+    equity = portfolio["account"]["equity_usd"]
+    pos_id = position["position_id"]
+    strategy_id = position.get("strategy_id", "")
+    symbol = position.get("symbol", "")
+    side = position.get("side", "LONG")
+    entry_price = position.get("entry_price", exit_price)
+    point_value = position.get("point_value_usd", 50.0)
+    cg = position.get("correlation_group", "uncategorized")
+
+    total_contracts = position.get("contracts", 0)
+    contracts_to_close = min(contracts_to_close, total_contracts)
+    contracts_remaining = total_contracts - contracts_to_close
+
+    # Fee for partial close (exit half of round-trip)
+    fee_rt = position.get("fee_per_contract_round_trip_usd")
+    if fee_rt is None:
+        strategy_rec = store.load_strategy_registry().get(strategy_id, {})
+        fee_rt = strategy_rec.get("fee_per_contract_round_trip_usd", 4.62)
+    fee = exit_fee_usd(contracts_to_close, fee_rt)
+
+    # PnL for closed portion
+    if side == "LONG":
+        raw_pnl = (exit_price - entry_price) * point_value * contracts_to_close
+    else:
+        raw_pnl = (entry_price - exit_price) * point_value * contracts_to_close
+    realized_pnl = round(raw_pnl - fee, 2)
+
+    # Update position in portfolio
+    for p in portfolio.get("positions", []):
+        if p.get("position_id") == pos_id:
+            p["contracts"] = contracts_remaining
+            # Margin release proportional to closed contracts
+            margin_per_c = position.get("margin_used_usd", 0.0) / total_contracts if total_contracts > 0 else 0.0
+            margin_released = margin_per_c * contracts_to_close
+            p["margin_used_usd"] = round(p.get("margin_used_usd", 0.0) - margin_released, 2)
+            # Recalculate risk at stop
+            stop_dist = abs(entry_price - p.get("stop_price", entry_price))
+            p["risk_at_stop_usd"] = round(stop_dist * point_value * contracts_remaining, 2)
+            p["risk_at_stop_pct"] = round(p["risk_at_stop_usd"] / equity * 100.0, 4) if equity > 0 else 0.0
+
+            # If T1 trigger: move stop to breakeven, activate trailing
+            if trigger == "T1":
+                sop = p.get("scale_out_plan", {})
+                if sop:
+                    sop["t1_filled"] = True
+                    sop["be_stop_active"] = True
+                    p["stop_price"] = entry_price  # breakeven stop
+                    p["risk_at_stop_usd"] = 0.0
+                    p["risk_at_stop_pct"] = 0.0
+
+            # Update margin in account
+            acct = portfolio["account"]
+            acct["margin_used_usd"] = round(max(0.0, acct.get("margin_used_usd", 0) - margin_released), 2)
+            acct["cash_usd"] = round(acct.get("cash_usd", 0) + margin_released + realized_pnl, 2)
+            acct["equity_usd"] = round(acct["cash_usd"] + acct["margin_used_usd"] +
+                                       sum(pos.get("unrealized_pnl_usd", 0) for pos in portfolio["positions"]), 2)
+            acct["peak_equity_usd"] = max(acct["peak_equity_usd"], acct["equity_usd"])
+            acct["margin_available_usd"] = acct["cash_usd"]
+            acct["margin_utilization_pct"] = round(
+                acct["margin_used_usd"] / acct["equity_usd"] * 100.0, 2
+            ) if acct["equity_usd"] > 0 else 0.0
+            break
+
+    # PnL tracking
+    pnl = portfolio.setdefault("pnl", {})
+    pnl["realized_today_usd"] = round(pnl.get("realized_today_usd", 0) + realized_pnl, 2)
+    pnl["total_today_usd"] = round(pnl.get("total_today_usd", 0) + realized_pnl, 2)
+    equity_base = portfolio["account"]["equity_usd"] or 1.0
+    pnl["total_today_pct"] = round(pnl["total_today_usd"] / equity_base * 100.0, 4)
+
+    # Heat recalculation
+    heat = portfolio.setdefault("heat", {})
+    heat["total_open_risk_usd"] = round(
+        sum(p.get("risk_at_stop_usd", 0) for p in portfolio["positions"]), 2
+    )
+    heat["total_open_risk_pct"] = round(
+        heat["total_open_risk_usd"] / equity * 100.0, 4
+    ) if equity > 0 else 0.0
+
+    cluster = heat.get("cluster_exposure", {})
+    if cg in cluster:
+        old_risk = position.get("risk_at_stop_usd", 0.0)
+        new_risk = round(abs(entry_price - position.get("stop_price", entry_price)) * point_value * contracts_remaining, 2)
+        cluster[cg]["risk_usd"] = round(max(0.0, cluster[cg]["risk_usd"] - old_risk + new_risk), 2)
+        cluster[cg]["risk_pct"] = round(cluster[cg]["risk_usd"] / equity * 100.0, 4) if equity > 0 else 0.0
+
+    store.save_portfolio(portfolio)
+
+    exit_category = _classify_exit(trigger, entry_price, exit_price, side)
+
+    close_record = {
+        "position_id": pos_id,
+        "strategy_id": strategy_id,
+        "symbol": symbol,
+        "side": side,
+        "contracts_closed": contracts_to_close,
+        "contracts_remaining": contracts_remaining,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "trigger": trigger,
+        "exit_reason": trigger,
+        "exit_category": exit_category,
+        "realized_pnl": realized_pnl,
+        "fee_usd": fee,
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    ledger.append(
+        C.EventType.POSITION_PARTIALLY_CLOSED,
+        run_id,
+        pos_id,
+        close_record,
+    )
+
+    # Alert on scale-out fills
+    alerting.alert("INFO", f"Scale-out {trigger}: {symbol} {side} closed {contracts_to_close} contracts @ {exit_price}",
+                   {"position_id": pos_id, "pnl": realized_pnl, "remaining": contracts_remaining})
+
+    return close_record
+
+
+# ---------------------------------------------------------------------------
+# Exit classification — for learning pipeline
+# ---------------------------------------------------------------------------
+
+def _classify_exit(trigger: str, entry_price: float, exit_price: float, side: str) -> str:
+    """Classify exit into categories for performance tracking."""
+    if side == "LONG":
+        pnl_direction = exit_price - entry_price
+    else:
+        pnl_direction = entry_price - exit_price
+
+    if trigger in ("T1",):
+        return "WIN_PARTIAL"
+    if trigger in ("T2", "TAKE_PROFIT"):
+        return "WIN_FULL"
+    if abs(pnl_direction) < 0.01:
+        return "BREAKEVEN"
+    if pnl_direction > 0:
+        if trigger == "TRAILING_STOP":
+            return "WIN_PARTIAL"
+        return "WIN_FULL"
+    if trigger in ("STOP",):
+        return "LOSS_FULL"
+    return "LOSS_PARTIAL"
+
+
+# ---------------------------------------------------------------------------
 # Close position (bracket trigger) — used by process_bracket_triggers
 # ---------------------------------------------------------------------------
 
@@ -245,7 +425,7 @@ def close_position(
 ) -> dict:
     """
     Remove a position from portfolio; update cash/margin/PnL; emit POSITION_CLOSED.
-    Returns the close record.
+    Returns the close record with exit_reason and exit_category.
     """
     portfolio = store.load_portfolio()
     equity    = portfolio["account"]["equity_usd"]
@@ -317,6 +497,8 @@ def close_position(
 
     store.save_portfolio(portfolio)
 
+    exit_category = _classify_exit(trigger, entry_price, exit_price, side)
+
     close_record = {
         "position_id":    pos_id,
         "strategy_id":    strategy_id,
@@ -326,8 +508,11 @@ def close_position(
         "entry_price":    entry_price,
         "exit_price":     exit_price,
         "trigger":        trigger,
+        "exit_reason":    trigger,
+        "exit_category":  exit_category,
         "realized_pnl":   realized_pnl,
         "fee_usd":        fee,
+        "bars_held":      position.get("bars_held", 0),
         "closed_at":      datetime.now(timezone.utc).isoformat(),
     }
 
@@ -337,6 +522,10 @@ def close_position(
         pos_id,
         close_record,
     )
+
+    # Alert on position close
+    alerting.alert("INFO", f"Position closed: {symbol} {side} {contracts}ct via {trigger} PnL=${realized_pnl:.2f}",
+                   {"position_id": pos_id, "exit_category": exit_category})
 
     return close_record
 
@@ -811,8 +1000,22 @@ def execute_approval(
         "point_value_usd":         point_value,
         "correlation_group":       strategy.get("correlation_group", ""),
     })
+    # Pass through scale_out_plan and max_hold_bars
+    if intent.get("scale_out_plan"):
+        approval_with_meta["scale_out_plan"] = intent["scale_out_plan"]
 
     position = _register_position(approval_with_meta, fill, bracket, run_id)
+
+    # Store max_hold_bars on the position for time exit checks
+    if approval.get("max_hold_bars"):
+        position["max_hold_bars"] = approval["max_hold_bars"]
+        # Re-save portfolio with max_hold_bars on the position
+        portfolio = store.load_portfolio()
+        for p in portfolio["positions"]:
+            if p["position_id"] == position["position_id"]:
+                p["max_hold_bars"] = approval["max_hold_bars"]
+                break
+        store.save_portfolio(portfolio)
 
     receipt: dict[str, Any] = {
         "execution_id":    exec_id,
@@ -850,6 +1053,10 @@ def execute_approval(
         "take_profit":  bracket["take_profit"],
     })
 
+    # Alert on order fill
+    alerting.alert("INFO", f"Order filled: {symbol} {side} {contracts_filled} contracts @ {fill_price}",
+                   {"position_id": position["position_id"], "strategy_id": intent.get("strategy_id")})
+
     return receipt
 
 
@@ -863,8 +1070,9 @@ def process_bracket_triggers(
     paper: bool = True,
 ) -> list[dict]:
     """
-    Check all open positions for stop/TP triggers using the latest 15m bars.
-    Closes triggered positions and returns the list of close records.
+    Check all open positions for stop/TP/T1/T2/trailing triggers.
+    Handles both full closes and partial closes (scale-out).
+    Returns the list of close records.
     """
     if not paper:
         return []  # Live bracket monitoring is exchange-driven
@@ -874,28 +1082,47 @@ def process_bracket_triggers(
     if not positions:
         return []
 
-    # Build 15m bar lookup by symbol (fall back to 1H if no 15m).
+    # Build bar lookup by symbol — prefer 5m for intraday, fall back to 15m/1H.
     # Also map micro symbols (MES→ES, MNQ→NQ) so micro positions find their bars.
     _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MBT": "BTC"}
     bars_by_symbol: dict[str, list[dict]] = {}
+    atr_by_symbol: dict[str, float] = {}
     for sym, snap in snapshots.items():
-        bars_15m = snap.get("bars", {}).get("15m") or snap.get("bars", {}).get("1H", [])
-        if bars_15m:
-            bars_by_symbol[sym] = bars_15m
+        bars = (snap.get("bars", {}).get("5m")
+                or snap.get("bars", {}).get("15m")
+                or snap.get("bars", {}).get("1H", []))
+        if bars:
+            bars_by_symbol[sym] = bars
+        atr_val = snap.get("indicators", {}).get("atr_14_1H", 0.0) or snap.get("indicators", {}).get("atr_14_4H", 0.0)
+        if atr_val:
+            atr_by_symbol[sym] = atr_val
     # Add micro-symbol aliases
     for micro, standard in _micro_to_standard.items():
         if standard in bars_by_symbol and micro not in bars_by_symbol:
             bars_by_symbol[micro] = bars_by_symbol[standard]
+        if standard in atr_by_symbol and micro not in atr_by_symbol:
+            atr_by_symbol[micro] = atr_by_symbol[standard]
 
-    triggered = check_bracket_triggers(positions, bars_by_symbol)
+    triggered = check_bracket_triggers(positions, bars_by_symbol, atr_by_symbol=atr_by_symbol)
     closed: list[dict] = []
 
     for event in triggered:
         pos       = event["position"]
         trigger   = event["trigger"]
         exit_px   = event["exit_price"]
-        record    = close_position(pos, exit_px, trigger, run_id)
-        closed.append(record)
+
+        if trigger == "T1":
+            # Partial close — scale out T1
+            sop = pos.get("scale_out_plan", {})
+            t1_pct = sop.get("t1_pct", 50) / 100.0
+            total = pos.get("contracts", 0)
+            contracts_to_close = max(1, int(total * t1_pct))
+            record = partial_close_position(pos, exit_px, contracts_to_close, "T1", run_id)
+            closed.append(record)
+        else:
+            # Full close — STOP, T2, TRAILING_STOP, TAKE_PROFIT, TIME_EXIT
+            record = close_position(pos, exit_px, trigger, run_id)
+            closed.append(record)
 
     return closed
 

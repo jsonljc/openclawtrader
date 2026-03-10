@@ -186,20 +186,27 @@ def check_bracket_triggers(
     positions: list[dict],
     bars_by_symbol: dict[str, list[dict]],
     tick_size_by_symbol: dict[str, float] = None,
+    atr_by_symbol: dict[str, float] = None,
 ) -> list[dict]:
     """
-    Check all open positions against current 15m bar data to see if
-    stop-loss or take-profit levels were breached.
+    Check all open positions against current bar data for:
+      - Stop-loss / take-profit triggers (full close)
+      - T1 scale-out triggers (partial close)
+      - Trailing stop updates and triggers
+      - Time exits (bars_held >= max_hold_bars)
 
     Args:
-        positions:        List of position dicts from portfolio.
-        bars_by_symbol:   {symbol: [bar_dict, ...]} — use 15m bars for granularity.
+        positions:         List of position dicts from portfolio.
+        bars_by_symbol:    {symbol: [bar_dict, ...]} — use 15m or 5m bars.
         tick_size_by_symbol: Optional override for tick sizes.
+        atr_by_symbol:     {symbol: atr_value} for trailing stop computation.
 
     Returns:
-        List of triggered events: [{position_id, trigger, exit_price, ...}]
+        List of triggered events: [{position_id, trigger, exit_price, position, ...}]
+        Events with trigger "T1" are partial closes; others are full closes.
     """
     triggered: list[dict] = []
+    atr_by_symbol = atr_by_symbol or {}
 
     for pos in positions:
         symbol     = pos.get("symbol", "")
@@ -212,9 +219,17 @@ def check_bracket_triggers(
         stop_status = bracket_status.get("stop_status", "ACTIVE")
         tp_status   = bracket_status.get("tp_status", "ACTIVE")
 
+        sop = pos.get("scale_out_plan") or {}
+        t1_price = sop.get("t1_price")
+        t2_price = sop.get("t2_price")
+        t1_filled = sop.get("t1_filled", False)
+
         bars = bars_by_symbol.get(symbol, [])
         if not bars:
             continue
+
+        # Increment bars_held
+        pos["bars_held"] = pos.get("bars_held", 0) + 1
 
         # Use the most recent bar for trigger check
         bar = bars[-1]
@@ -228,29 +243,87 @@ def check_bracket_triggers(
         trigger = None
         exit_price = None
 
+        # --- Trailing stop update (runs every cycle after T1 filled) ---
+        if t1_filled:
+            atr_val = atr_by_symbol.get(symbol, 0.0)
+            trail_mult = sop.get("trailing_atr_multiple", 1.5)
+            if atr_val > 0:
+                if side == "LONG":
+                    new_trail = round(bar_high - (trail_mult * atr_val), 2)
+                    if new_trail > (stop_price or 0):
+                        pos["stop_price"] = new_trail
+                        stop_price = new_trail
+                        sop["trailing_stop"] = new_trail
+                elif side == "SHORT":
+                    new_trail = round(bar_low + (trail_mult * atr_val), 2)
+                    if new_trail < (stop_price or float('inf')):
+                        pos["stop_price"] = new_trail
+                        stop_price = new_trail
+                        sop["trailing_stop"] = new_trail
+
+        # --- Check triggers in priority order ---
         if side == "LONG":
+            # Stop hit (before T1 = full close, after T1 = trailing stop on remaining)
             if stop_status == "ACTIVE" and stop_price is not None and bar_low <= stop_price:
-                trigger    = "STOP"
-                exit_price = stop_price   # May be worse if gapped through
+                if t1_filled:
+                    trigger = "TRAILING_STOP"
+                else:
+                    trigger = "STOP"
+                exit_price = stop_price
                 if bar_low < stop_price:
-                    # Gap through: actual fill at bar open (or bar_low if no open)
                     bar_open = bar.get("o", bar.get("open", stop_price))
                     if bar_open < stop_price:
-                        exit_price = bar_open  # worse fill due to gap
-            elif tp_status == "ACTIVE" and tp_price is not None and bar_high >= tp_price:
-                trigger    = "TAKE_PROFIT"
+                        exit_price = bar_open
+
+            # T1 check (before T2/TP)
+            elif sop and t1_price is not None and not t1_filled and bar_high >= t1_price:
+                trigger = "T1"
+                exit_price = t1_price
+
+            # T2 check (after T1 filled)
+            elif sop and t2_price is not None and t1_filled and bar_high >= t2_price:
+                trigger = "T2"
+                exit_price = t2_price
+
+            # Original TP (fallback if no scale-out plan)
+            elif tp_status == "ACTIVE" and tp_price is not None and not sop and bar_high >= tp_price:
+                trigger = "TAKE_PROFIT"
                 exit_price = tp_price
 
         elif side == "SHORT":
+            # Stop hit
             if stop_status == "ACTIVE" and stop_price is not None and bar_high >= stop_price:
-                trigger    = "STOP"
+                if t1_filled:
+                    trigger = "TRAILING_STOP"
+                else:
+                    trigger = "STOP"
                 exit_price = stop_price
-                bar_open   = bar.get("o", bar.get("open", stop_price))
+                bar_open = bar.get("o", bar.get("open", stop_price))
                 if bar_open > stop_price:
                     exit_price = bar_open
-            elif tp_status == "ACTIVE" and tp_price is not None and bar_low <= tp_price:
-                trigger    = "TAKE_PROFIT"
+
+            # T1 check
+            elif sop and t1_price is not None and not t1_filled and bar_low <= t1_price:
+                trigger = "T1"
+                exit_price = t1_price
+
+            # T2 check
+            elif sop and t2_price is not None and t1_filled and bar_low <= t2_price:
+                trigger = "T2"
+                exit_price = t2_price
+
+            # Original TP
+            elif tp_status == "ACTIVE" and tp_price is not None and not sop and bar_low <= tp_price:
+                trigger = "TAKE_PROFIT"
                 exit_price = tp_price
+
+        # --- Time exit ---
+        if trigger is None:
+            bars_held = pos.get("bars_held", 0)
+            max_hold = pos.get("max_hold_bars", 999)
+            if bars_held >= max_hold:
+                trigger = "TIME_EXIT"
+                exit_price = bar_close
 
         if trigger:
             triggered.append({

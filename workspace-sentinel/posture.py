@@ -41,6 +41,19 @@ def _days_since(ts: str | None) -> float:
     return _hours_since(ts) / 24.0
 
 
+def _compute_weekly_loss(portfolio: dict) -> float:
+    """
+    Compute the weekly loss percentage from the portfolio.
+    Uses realized_week_pct if available, otherwise estimates from daily.
+    """
+    pnl = portfolio.get("pnl", {})
+    weekly_pct = pnl.get("realized_week_pct")
+    if weekly_pct is not None:
+        return weekly_pct
+    # Fallback: use portfolio drawdown as a proxy
+    return pnl.get("total_today_pct", 0.0)
+
+
 def compute_posture(
     portfolio: dict,
     param_version: str = "PV_0001",
@@ -51,6 +64,7 @@ def compute_posture(
     Compute and persist the next posture state.
     Returns (new_posture, state_dict).
     Escalation is immediate; recovery requires cooldown + positive conditions.
+    Includes weekly loss tracking: weekly loss >= 5% → HALT for rest of week.
     """
     params = store.load_params(param_version)
     sp = params.get("sentinel", {})
@@ -66,6 +80,35 @@ def compute_posture(
     pnl = portfolio.get("pnl", {})
     daily_pct = pnl.get("total_today_pct", 0.0)
     dd_pct = pnl.get("portfolio_dd_pct", 0.0)
+
+    # --- Weekly loss check ---
+    weekly_loss_pct = _compute_weekly_loss(portfolio)
+    weekly_halt_threshold = sp.get("weekly_loss_halt_pct", -5.0)
+    if weekly_loss_pct <= weekly_halt_threshold:
+        now = datetime.now(timezone.utc)
+        # Check if we're already halted for the week
+        weekly_halt_since = state.get("weekly_halt_since")
+        if weekly_halt_since:
+            halt_dt = _parse_ts(weekly_halt_since)
+            if halt_dt and halt_dt.isocalendar()[1] == now.isocalendar()[1]:
+                # Already halted this week — maintain HALT
+                state["posture"] = C.Posture.HALT
+                store.save_posture_state(state)
+                return C.Posture.HALT, state
+        # New weekly halt
+        state["posture"] = C.Posture.HALT
+        state["posture_since"] = now.isoformat()
+        state["weekly_halt_since"] = now.isoformat()
+        store.save_posture_state(state)
+        ledger.append(C.EventType.POSTURE_CHANGE, run_id, "POSTURE", {
+            "from_posture": current,
+            "to_posture": C.Posture.HALT,
+            "reason": f"Weekly loss halt: {weekly_loss_pct:.2f}% <= {weekly_halt_threshold}%",
+        })
+        alerting.alert(C.Posture.HALT,
+                       f"WEEKLY HALT: loss {weekly_loss_pct:.2f}% exceeds threshold",
+                       {"weekly_loss_pct": weekly_loss_pct})
+        return C.Posture.HALT, state
 
     # Thresholds (stored as negative, e.g. -1.0 for -1%)
     daily_caution = sp.get("daily_loss_caution_pct", -1.0)

@@ -1,0 +1,32 @@
+{
+  "strategy_id": "trend_pullback_5m_MNQ",
+  "display_name": "Trend Day Pullback MNQ 5m",
+  "symbol": "NQ",
+  "micro_symbol": "MNQ",
+  "use_micro": true,
+  "timeframe": "5m",
+  "status": "ACTIVE",
+  "signal": {
+    "setup_family": "TREND_PULLBACK",
+    "min_stop_points": 15,
+    "time_exit_minutes": 120
+  },
+  "risk_budget_pct": 1.0,
+  "max_hold_bars": 24,
+  "point_value_usd": 20.0,
+  "micro_point_value_usd": 2.0,
+  "tick_size": 0.25,
+  "tick_value_usd": 5.00,
+  "micro_tick_value_usd": 0.50,
+  "fee_per_contract_round_trip_usd": 4.62,
+  "micro_fee_per_contract_round_trip_usd": 1.34,
+  "micro_available": true,
+  "correlation_group": "equity_beta",
+  "margin_per_contract_usd": 21120,
+  "micro_margin_per_contract_usd": 2112,
+  "incubation": {
+    "is_incubating": true,
+    "incubation_size_pct": 5,
+    "incubation_trades_target": 30
+  }
+}

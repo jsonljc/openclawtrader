@@ -168,6 +168,37 @@ def adx(
     return round(adx_val, 1)
 
 
+def ema(closes: list[float], period: int) -> float:
+    """Exponential Moving Average over the last `period` closes.
+
+    Uses the standard EMA formula:
+        multiplier = 2 / (period + 1)
+        EMA_today = close * multiplier + EMA_yesterday * (1 - multiplier)
+
+    Initial value is the SMA of the first `period` closes.
+
+    Args:
+        closes: List of closing prices (oldest first).
+        period: Number of periods for EMA smoothing.
+
+    Returns:
+        EMA value. Returns 0.0 if insufficient data.
+    """
+    if not closes or period <= 0:
+        return 0.0
+    if len(closes) < period:
+        return sum(closes) / len(closes)
+
+    # Initial EMA = SMA of first `period` values
+    ema_val = sum(closes[:period]) / period
+    mult = 2.0 / (period + 1)
+
+    for i in range(period, len(closes)):
+        ema_val = closes[i] * mult + ema_val * (1 - mult)
+
+    return round(ema_val, 4)
+
+
 def slope(values: list[float], window: int = 5) -> float:
     """Linear regression slope of the last `window` values.
 

@@ -385,6 +385,7 @@ def get_market_snapshot(
         contract = qualified[0]
 
     # Fetch bars at multiple timeframes
+    bars_5m = _fetch_bars(ib, contract, "5 mins", "1 D")
     bars_15m = _fetch_bars(ib, contract, "15 mins", "1 H")
     bars_1h = _fetch_bars(ib, contract, "1 hour", "2 D")
     bars_4h = _fetch_bars(ib, contract, "4 hours", "10 D")
@@ -415,6 +416,7 @@ def get_market_snapshot(
         "symbol": symbol,
         "session_state": session,
         "bars": {
+            "5m": bars_5m,
             "15m": bars_15m,
             "1H": bars_1h,
             "4H": bars_4h,

@@ -40,6 +40,11 @@ class EventType:
     MISSED_OPPORTUNITY      = "MISSED_OPPORTUNITY"
     GAP_EVENT               = "GAP_EVENT"
     LEARNING_PROPOSAL       = "LEARNING_PROPOSAL"
+    INTRADAY_REGIME         = "INTRADAY_REGIME"
+    INTRADAY_SETUP_DETECTED = "INTRADAY_SETUP_DETECTED"
+    INTRADAY_SETUP_SCORED   = "INTRADAY_SETUP_SCORED"
+    POSITION_PARTIALLY_CLOSED = "POSITION_PARTIALLY_CLOSED"
+    TRAILING_STOP_UPDATED     = "TRAILING_STOP_UPDATED"
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +166,14 @@ class SessionState:
     CLOSED     = "CLOSED"
     EXTENDED   = "EXTENDED"
     PRE_OPEN   = "PRE_OPEN"
+
+    # Intraday sessions (granular)
+    PREMARKET     = "PREMARKET"
+    US_OPEN       = "US_OPEN"
+    MORNING_DRIVE = "MORNING_DRIVE"
+    MIDDAY        = "MIDDAY"
+    AFTERNOON     = "AFTERNOON"
+    MOC_CLOSE     = "MOC_CLOSE"
 
 
 # ---------------------------------------------------------------------------

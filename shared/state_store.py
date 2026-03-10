@@ -346,6 +346,23 @@ def save_learning_state(state: dict) -> None:
         _write(_LEARNING_STATE_PATH, state)
 
 
+# ---------------------------------------------------------------------------
+# Generic state persistence (for intraday regime, session counters, etc.)
+# ---------------------------------------------------------------------------
+
+def load_state(name: str) -> dict | None:
+    """Load arbitrary named state from data dir. Returns None if missing."""
+    path = _DATA_DIR / f"{name}.json"
+    return _read(path)
+
+
+def save_state(name: str, data: dict) -> None:
+    """Save arbitrary named state to data dir."""
+    with _lock:
+        path = _DATA_DIR / f"{name}.json"
+        _write(path, data)
+
+
 def update_exec_quality_slippage(strategy_id: str, realized_slippage_ticks: float) -> None:
     """Phase 4: Append realized slippage for calibration; keep last 50, avg last 20."""
     with _lock:
