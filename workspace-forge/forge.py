@@ -596,9 +596,13 @@ def _execute_roll_ib(
 
     # Step 2: Close old position via IB market order
     close_side = "SELL" if side == "LONG" else "BUY"
-    ib_symbol_old = ("MES" if use_micro and symbol == "ES" else
-                     "MNQ" if use_micro and symbol == "NQ" else symbol)
-    old_contract = Future(ib_symbol_old, exchange="CME", currency="USD")
+    _MICRO_MAP = {"ES": "MES", "NQ": "MNQ", "CL": "MCL", "GC": "MGC"}
+    _EXCHANGE_MAP = {"ES": "CME", "NQ": "CME", "MES": "CME", "MNQ": "CME",
+                     "CL": "NYMEX", "MCL": "NYMEX", "GC": "COMEX", "MGC": "COMEX",
+                     "ZB": "CBOT"}
+    ib_symbol_old = _MICRO_MAP.get(symbol, symbol) if use_micro else symbol
+    ib_exchange_old = _EXCHANGE_MAP.get(ib_symbol_old, "CME")
+    old_contract = Future(ib_symbol_old, exchange=ib_exchange_old, currency="USD")
     qualified = ib.qualifyContracts(old_contract)
     if qualified:
         old_contract = qualified[0]
@@ -639,7 +643,7 @@ def _execute_roll_ib(
 
     # Resolve new contract
     ib_symbol_new = ib_symbol_old  # Same instrument, different month
-    new_contract = Future(ib_symbol_new, exchange="CME", currency="USD")
+    new_contract = Future(ib_symbol_new, exchange=ib_exchange_old, currency="USD")
     qualified = ib.qualifyContracts(new_contract)
     if qualified:
         new_contract = qualified[0]
@@ -877,9 +881,13 @@ def _execute_approval_ib(
 
     # STEP 5-6: Submit order to IB
     ib = get_connection()
-    ib_symbol = ("MES" if use_micro and symbol == "ES" else
-                 "MNQ" if use_micro and symbol == "NQ" else symbol)
-    ib_contract = Future(ib_symbol, exchange="CME", currency="USD")
+    _MICRO_MAP = {"ES": "MES", "NQ": "MNQ", "CL": "MCL", "GC": "MGC"}
+    _EXCHANGE_MAP = {"ES": "CME", "NQ": "CME", "MES": "CME", "MNQ": "CME",
+                     "CL": "NYMEX", "MCL": "NYMEX", "GC": "COMEX", "MGC": "COMEX",
+                     "ZB": "CBOT"}
+    ib_symbol = _MICRO_MAP.get(symbol, symbol) if use_micro else symbol
+    ib_exchange = _EXCHANGE_MAP.get(ib_symbol, "CME")
+    ib_contract = Future(ib_symbol, exchange=ib_exchange, currency="USD")
     qualified = ib.qualifyContracts(ib_contract)
     if qualified:
         ib_contract = qualified[0]
@@ -1279,7 +1287,7 @@ def run_reconciliation_ib(run_id: str) -> dict:
     # Build IB position map: (symbol, side) -> total contracts
     # IB reports position as signed quantity: positive = long, negative = short
     ib_pos_map: dict[tuple[str, str], float] = {}
-    _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MBT": "BTC"}
+    _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MGC": "GC", "MBT": "BTC"}
     for ib_pos in ib_positions:
         contract = ib_pos.contract
         sym = contract.localSymbol or contract.symbol or ""
@@ -1496,7 +1504,7 @@ def process_bracket_triggers(
 
     # Build bar lookup by symbol — prefer 5m for intraday, fall back to 15m/1H.
     # Also map micro symbols (MES→ES, MNQ→NQ) so micro positions find their bars.
-    _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MBT": "BTC"}
+    _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MGC": "GC", "MBT": "BTC"}
     bars_by_symbol: dict[str, list[dict]] = {}
     atr_by_symbol: dict[str, float] = {}
     for sym, snap in snapshots.items():

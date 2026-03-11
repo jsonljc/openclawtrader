@@ -48,7 +48,7 @@ import forge
 import watchtower
 import posture
 from data_source import get_all_snapshots
-from session import detect_intra_session, get_session_report, IntraSession, is_rth
+from session import detect_intra_session, get_session_report, IntraSession, is_rth, is_any_rth
 from structure import compute_structure
 from regime_intraday import classify_regime
 from scorer import score_opportunity
@@ -219,9 +219,10 @@ def run_intraday_cycle(
     _log(f"  Session: {session} (modifier={session_report['modifier']}, "
          f"minutes_in={session_report['minutes_into_session']})")
 
-    if not session_report["is_rth"] and not force_signal:
+    any_rth_active = is_any_rth(now_utc)
+    if not any_rth_active and not force_signal:
         return {"run_id": run_id, "status": "OUTSIDE_RTH", "session": session}
-    if force_signal and not session_report["is_rth"]:
+    if force_signal and not any_rth_active:
         # Override session for dev/test — simulate MORNING_DRIVE
         session_report["is_rth"] = True
         session_report["session"] = "MORNING_DRIVE"
@@ -400,8 +401,8 @@ def run_intraday_loop(
     while True:
         now_utc = datetime.now(timezone.utc)
 
-        if not is_rth(now_utc):
-            _log("[LOOP] Outside RTH — waiting...")
+        if not is_any_rth(now_utc):
+            _log("[LOOP] Outside RTH (all instruments) — waiting...")
             time.sleep(60)
             continue
 

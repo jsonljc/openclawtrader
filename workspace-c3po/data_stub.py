@@ -121,10 +121,20 @@ def get_market_snapshot(
 
     rng = random.Random(seed)
 
+    # Per-instrument price drift and ATR ranges
+    _INSTRUMENT_PARAMS = {
+        "ES": {"drift": 30, "atr_1h": (10.0, 18.0), "tick": 0.25, "round_dp": 2},
+        "NQ": {"drift": 120, "atr_1h": (40.0, 70.0), "tick": 0.25, "round_dp": 2},
+        "CL": {"drift": 3, "atr_1h": (0.30, 0.60), "tick": 0.01, "round_dp": 2},
+        "GC": {"drift": 30, "atr_1h": (5.0, 12.0), "tick": 0.10, "round_dp": 2},
+        "ZB": {"drift": 2, "atr_1h": (0.25, 0.50), "tick": 0.03125, "round_dp": 5},
+    }
+    ip = _INSTRUMENT_PARAMS.get(symbol, _INSTRUMENT_PARAMS["ES"])
+
     # Price drift: small random walk around base_price
-    price = round(base_price + rng.uniform(-30, 30), 2)
-    atr_1h = round(rng.uniform(10.0, 18.0), 2)
-    atr_4h = round(atr_1h * rng.uniform(2.5, 3.5), 2)
+    price = round(base_price + rng.uniform(-ip["drift"], ip["drift"]), ip["round_dp"])
+    atr_1h = round(rng.uniform(*ip["atr_1h"]), 4)
+    atr_4h = round(atr_1h * rng.uniform(2.5, 3.5), 4)
 
     session = session_override or get_session_state(now)
 
@@ -148,7 +158,7 @@ def get_market_snapshot(
     baseline_depth = 850
     book_depth = int(baseline_depth * rng.uniform(0.7, 1.3))
     spread_ticks = rng.choice([1, 1, 1, 2, 2])
-    spread_bps = round(spread_ticks * 0.25 / price * 10000, 2)
+    spread_bps = round(spread_ticks * ip["tick"] / price * 10000, 2)
 
     # --- Contract expiry ---
     days_to_expiry = max(1, (datetime(2026, 6, 20, tzinfo=timezone.utc) - now).days)
@@ -224,7 +234,7 @@ def get_market_snapshot(
 
 
 def get_all_snapshots(force_signal: bool = False) -> dict[str, dict]:
-    """Return snapshots for all active symbols (Phase 3: ES + NQ)."""
+    """Return snapshots for all active symbols (ES, NQ, CL, GC, ZB)."""
     session_override = SessionState.CORE if force_signal else None
     return {
         "ES": get_market_snapshot(
@@ -236,6 +246,24 @@ def get_all_snapshots(force_signal: bool = False) -> dict[str, dict]:
         "NQ": get_market_snapshot(
             "NQ",
             base_price=21_000.0,
+            force_signal=force_signal,
+            session_override=session_override,
+        ),
+        "CL": get_market_snapshot(
+            "CL",
+            base_price=75.0,
+            force_signal=force_signal,
+            session_override=session_override,
+        ),
+        "GC": get_market_snapshot(
+            "GC",
+            base_price=2_700.0,
+            force_signal=force_signal,
+            session_override=session_override,
+        ),
+        "ZB": get_market_snapshot(
+            "ZB",
+            base_price=120.0,
             force_signal=force_signal,
             session_override=session_override,
         ),

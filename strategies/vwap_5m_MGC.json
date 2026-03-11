@@ -1,0 +1,61 @@
+{
+  "strategy_id": "vwap_5m_MGC",
+  "description": "5m VWAP Reclaim/Reject on MGC; enters on VWAP cross with volume confirmation",
+  "symbol": "GC",
+  "timeframe": "5m",
+  "contract_type": "FUTURE",
+  "contract_month": "GCQ26",
+  "tick_size": 0.10,
+  "tick_value_usd": 1.00,
+  "point_value_usd": 10.00,
+  "micro_available": false,
+  "micro_symbol": null,
+  "micro_point_value_usd": null,
+  "micro_tick_value_usd": null,
+  "use_micro": true,
+  "correlation_group": "metals",
+  "fee_per_contract_round_trip_usd": 4.62,
+  "margin_per_contract_usd": 1100.00,
+  "micro_margin_per_contract_usd": 1100.00,
+
+  "risk_budget_pct": 1.0,
+  "max_strategy_dd_pct": 8.0,
+  "expected_monthly_return_pct": 3.0,
+  "expected_max_dd_pct": 10.0,
+  "expected_sharpe": 1.0,
+  "expected_hit_rate": 0.52,
+  "expected_avg_slippage_ticks": 1.0,
+  "expected_trades_per_month": 30,
+  "min_health_score": 0.30,
+  "cooldown_bars_after_disable": 20,
+  "min_trades_for_full_health": 20,
+  "max_hold_bars": 24,
+
+  "contract_expiry": "2026-08-27",
+  "roll_days_before_expiry": 5,
+  "session_schedule": {
+    "core":       {"start": "08:20", "end": "13:30", "tz": "America/New_York"},
+    "extended":   {"start": "18:00", "end": "08:20", "tz": "America/New_York"},
+    "closed":     {"start": "13:30", "end": "18:00", "tz": "America/New_York"}
+  },
+
+  "signal": {
+    "entry_condition": "vwap_reclaim_reject",
+    "setup_family": "VWAP",
+    "min_bars_on_wrong_side": 3,
+    "min_session_minutes": 45,
+    "stop_atr_multiple": 0.5,
+    "regime_required": ["TREND", "RANGE"],
+    "min_reward_risk": 1.0
+  },
+
+  "status": "ACTIVE",
+  "status_changed_at": "2026-03-11T00:00:00Z",
+  "incubation": {
+    "is_incubating": true,
+    "incubation_start": "2026-03-11T00:00:00Z",
+    "incubation_size_pct": 100,
+    "incubation_min_trades": 50,
+    "incubation_min_days": 30
+  }
+}

@@ -39,10 +39,26 @@ logger = logging.getLogger(__name__)
 # IB contract helpers
 # ---------------------------------------------------------------------------
 
+EXCHANGE_MAP: dict[str, str] = {
+    "ES": "CME", "NQ": "CME", "MES": "CME", "MNQ": "CME",
+    "CL": "NYMEX", "MCL": "NYMEX",
+    "GC": "COMEX", "MGC": "COMEX",
+    "ZB": "CBOT",
+}
+
+TICK_SIZE_MAP: dict[str, float] = {
+    "ES": 0.25, "NQ": 0.25, "MES": 0.25, "MNQ": 0.25,
+    "CL": 0.01, "MCL": 0.01,
+    "GC": 0.10, "MGC": 0.10,
+    "ZB": 0.03125,
+}
+
+
 def _make_futures_contract(symbol: str):
-    """Create an IB Future contract for ES or NQ (front month, auto-resolved)."""
+    """Create an IB Future contract (front month, auto-resolved)."""
     from ib_insync import Future
-    return Future(symbol, exchange="CME", currency="USD")
+    exchange = EXCHANGE_MAP.get(symbol, "CME")
+    return Future(symbol, exchange=exchange, currency="USD")
 
 
 def _make_vix_index():
@@ -150,7 +166,7 @@ def _fetch_microstructure(ib, contract) -> dict:
 
         ticker = ib.ticker(contract)
         if ticker and ticker.bid and ticker.ask and ticker.bid > 0:
-            tick_size = 0.25  # ES/NQ standard tick
+            tick_size = TICK_SIZE_MAP.get(contract.symbol, 0.25)
             spread_pts = ticker.ask - ticker.bid
             spread_ticks = max(1, round(spread_pts / tick_size))
             mid = (ticker.bid + ticker.ask) / 2.0
@@ -433,9 +449,23 @@ def get_market_snapshot(
 # Multi-symbol entry point (matches data_stub.get_all_snapshots signature)
 # ---------------------------------------------------------------------------
 
+def _get_active_symbols() -> list[str]:
+    """Get unique symbols from active strategies in the registry."""
+    try:
+        from shared import state_store as store
+        registry = store.load_strategy_registry()
+        symbols = set()
+        for cfg in registry.values():
+            if cfg.get("status") == "ACTIVE":
+                symbols.add(cfg.get("symbol", "ES"))
+        return sorted(symbols) if symbols else ["ES", "NQ"]
+    except Exception:
+        return ["ES", "NQ"]
+
+
 def get_all_snapshots(force_signal: bool = False) -> dict[str, dict]:
     """
-    Fetch snapshots for ES and NQ from Interactive Brokers.
+    Fetch snapshots for all active instruments from Interactive Brokers.
 
     This is the drop-in replacement for data_stub.get_all_snapshots().
     On connection failure, returns None (caller should fall back to stub).
@@ -444,14 +474,15 @@ def get_all_snapshots(force_signal: bool = False) -> dict[str, dict]:
         force_signal: Ignored for IB data (real markets can't be forced).
 
     Returns:
-        {"ES": {snapshot}, "NQ": {snapshot}} or raises on IB error.
+        {"ES": {...}, "NQ": {...}, "CL": {...}, ...} or raises on IB error.
     """
     from ib_gateway import get_connection
 
     ib = get_connection()
+    symbols = _get_active_symbols()
 
     snapshots = {}
-    for symbol in ("ES", "NQ"):
+    for symbol in symbols:
         try:
             snap = get_market_snapshot(ib, symbol, force_signal=force_signal)
             snapshots[symbol] = snap

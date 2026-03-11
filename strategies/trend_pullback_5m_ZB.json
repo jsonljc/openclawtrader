@@ -1,0 +1,34 @@
+{
+  "strategy_id": "trend_pullback_5m_ZB",
+  "display_name": "Trend Day Pullback ZB 5m",
+  "symbol": "ZB",
+  "micro_symbol": null,
+  "use_micro": false,
+  "timeframe": "5m",
+  "status": "ACTIVE",
+  "signal": {
+    "setup_family": "TREND_PULLBACK",
+    "min_stop_points": 0.15625,
+    "time_exit_minutes": 120
+  },
+  "risk_budget_pct": 1.0,
+  "max_hold_bars": 24,
+  "point_value_usd": 1000.0,
+  "micro_point_value_usd": null,
+  "tick_size": 0.03125,
+  "tick_value_usd": 31.25,
+  "micro_tick_value_usd": null,
+  "fee_per_contract_round_trip_usd": 4.62,
+  "micro_fee_per_contract_round_trip_usd": null,
+  "micro_available": false,
+  "correlation_group": "rates",
+  "margin_per_contract_usd": 4400,
+  "micro_margin_per_contract_usd": null,
+  "contract_month": "ZBU26",
+  "contract_expiry": "2026-09-21",
+  "incubation": {
+    "is_incubating": true,
+    "incubation_size_pct": 100,
+    "incubation_trades_target": 50
+  }
+}

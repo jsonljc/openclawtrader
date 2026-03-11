@@ -1,0 +1,34 @@
+{
+  "strategy_id": "trend_pullback_5m_MGC",
+  "display_name": "Trend Day Pullback MGC 5m",
+  "symbol": "GC",
+  "micro_symbol": "MGC",
+  "use_micro": true,
+  "timeframe": "5m",
+  "status": "ACTIVE",
+  "signal": {
+    "setup_family": "TREND_PULLBACK",
+    "min_stop_points": 2.0,
+    "time_exit_minutes": 120
+  },
+  "risk_budget_pct": 1.0,
+  "max_hold_bars": 24,
+  "point_value_usd": 100.0,
+  "micro_point_value_usd": 10.0,
+  "tick_size": 0.10,
+  "tick_value_usd": 10.00,
+  "micro_tick_value_usd": 1.00,
+  "fee_per_contract_round_trip_usd": 4.62,
+  "micro_fee_per_contract_round_trip_usd": 4.62,
+  "micro_available": true,
+  "correlation_group": "metals",
+  "margin_per_contract_usd": 11000,
+  "micro_margin_per_contract_usd": 1100,
+  "contract_month": "GCQ26",
+  "contract_expiry": "2026-08-27",
+  "incubation": {
+    "is_incubating": true,
+    "incubation_size_pct": 100,
+    "incubation_trades_target": 50
+  }
+}
