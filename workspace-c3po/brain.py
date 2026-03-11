@@ -375,6 +375,9 @@ _SIGNAL_HANDLERS = {
     "trend_reclaim_4H_ES":  _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_NQ":  _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_BTC": _evaluate_trend_reclaim_4H,
+    "trend_reclaim_4H_CL":  _evaluate_trend_reclaim_4H,
+    "trend_reclaim_4H_GC":  _evaluate_trend_reclaim_4H,
+    "trend_reclaim_4H_ZB":  _evaluate_trend_reclaim_4H,
 }
 
 
