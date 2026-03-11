@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 import indicators
+from shared.utils import round_to_tick
 
 
 def _find_day_extremes(bars_5m: list[dict]) -> tuple[float, float]:
@@ -168,6 +169,7 @@ def detect(
     current_low = current_bar.get("l", current_bar.get("low", float('inf')))
 
     # Determine side based on trend direction
+    tick = strategy.get("tick_size", 0.25)
     side = None
     min_stop_pts = strategy.get("signal", {}).get("min_stop_points", 3)
 
@@ -187,10 +189,10 @@ def detect(
                 stop_price = entry_price - min_stop_pts
 
             # T1: prior swing high
-            t1_price = round(pullback["swing_high"], 2)
+            t1_price = round_to_tick(pullback["swing_high"], tick)
             # T2: 1.5× distance from pullback low to prior high
             move_dist = pullback["swing_high"] - pullback["pullback_low"]
-            t2_price = round(pullback["pullback_low"] + 1.5 * move_dist, 2)
+            t2_price = round_to_tick(pullback["pullback_low"] + 1.5 * move_dist, tick)
             target_price = t2_price
 
     # Downtrend: day low was made recently and price is below VWAP
@@ -203,9 +205,9 @@ def detect(
             if stop_price - entry_price < min_stop_pts:
                 stop_price = entry_price + min_stop_pts
 
-            t1_price = round(pullback["swing_low"], 2)
+            t1_price = round_to_tick(pullback["swing_low"], tick)
             move_dist = pullback["pullback_high"] - pullback["swing_low"]
-            t2_price = round(pullback["pullback_high"] - 1.5 * move_dist, 2)
+            t2_price = round_to_tick(pullback["pullback_high"] - 1.5 * move_dist, tick)
             target_price = t2_price
 
     if side is None:
@@ -219,9 +221,9 @@ def detect(
 
     return {
         "side": side,
-        "entry_price": round(entry_price, 2),
-        "stop_price": round(stop_price, 2),
-        "target_price": round(target_price, 2),
+        "entry_price": round_to_tick(entry_price, tick),
+        "stop_price": round_to_tick(stop_price, tick),
+        "target_price": round_to_tick(target_price, tick),
         "setup_family": "TREND_PULLBACK",
         "scale_out_plan": {
             "t1_pct": 50,

@@ -22,6 +22,24 @@ from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 
+# ---------------------------------------------------------------------------
+# Strategy pre-flight validation
+# ---------------------------------------------------------------------------
+
+_REQUIRED_STRATEGY_FIELDS = [
+    "tick_size", "tick_value_usd", "point_value_usd",
+    "margin_per_contract_usd",
+]
+
+
+def _validate_strategy_fields(strategy: dict, strategy_id: str) -> tuple[bool, str]:
+    """Reject strategies missing critical instrument fields."""
+    missing = [f for f in _REQUIRED_STRATEGY_FIELDS if f not in strategy or strategy[f] is None]
+    if missing:
+        return False, f"Strategy {strategy_id} missing required fields: {missing}"
+    return True, ""
+
+
 # Add forge path for slippage model
 sys.path.insert(0, str(Path(__file__).parent.parent / "workspace-forge"))
 from slippage_model import estimate_slippage_ticks, compute_ev_ratio
@@ -638,6 +656,13 @@ def evaluate_intent(
     strategy = registry.get(strategy_id, {})
     if not strategy:
         deny = _deny(intent, approval_id, run_id, f"Unknown strategy_id: {strategy_id}", sp, posture=posture)
+        ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
+        return deny
+
+    # --- Pre-flight: reject if critical instrument fields are missing ---
+    valid, reason = _validate_strategy_fields(strategy, strategy_id)
+    if not valid:
+        deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)
         return deny
 

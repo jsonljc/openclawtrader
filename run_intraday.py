@@ -261,10 +261,18 @@ def run_intraday_cycle(
 
     # 5. Structure levels
     structure_levels = {}
+    registry = store.load_strategy_registry()
+    # Build symbol → tick_size map from registry
+    sym_tick = {}
+    for cfg in registry.values():
+        sym = cfg.get("symbol", "ES")
+        if sym not in sym_tick:
+            sym_tick[sym] = cfg.get("tick_size", 0.25)
     for symbol in snapshots:
         bars_5m = snapshots[symbol].get("bars", {}).get("5m", [])
         bars_daily = snapshots[symbol].get("bars", {}).get("1D", [])
-        levels = compute_structure(bars_5m, bars_daily, now_utc)
+        tick_size = sym_tick.get(symbol, 0.25)
+        levels = compute_structure(bars_5m, bars_daily, now_utc, symbol=symbol, tick_size=tick_size)
         structure_levels[symbol] = levels.to_dict()
 
     # 6. Regime classification (every 15 min = every 3rd cycle)

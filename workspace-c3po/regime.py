@@ -31,15 +31,18 @@ def _trend_score(snapshot: dict) -> tuple[float, dict]:
     ind = snapshot.get("indicators", {})
     adx = ind.get("adx_14", 25.0)
     ma_slope = ind.get("ma_20_slope", 0.0)
+    atr = ind.get("atr_14_1H", 1.0)
 
     # ADX: 0–25 = low, 25–50 = medium, 50+ = strong trend
     adx_score = min(1.0, adx / 50.0)
-    # Slope: positive = bullish structure, negative = bearish
-    slope_score = 0.5 + 0.5 * math.tanh(ma_slope * 100)  # maps to [0,1]
+    # Slope: normalize by ATR so score is price-scale independent
+    normalized_slope = (ma_slope / atr) if atr > 0 else 0.0
+    slope_score = 0.5 + 0.5 * math.tanh(normalized_slope * 500)  # maps to [0,1]
     raw = 0.6 * adx_score + 0.4 * slope_score
     raw = max(0.0, min(1.0, raw))
     return raw, {"adx": adx, "adx_score": round(adx_score, 4),
-                 "ma_slope": ma_slope, "slope_score": round(slope_score, 4)}
+                 "ma_slope": ma_slope, "slope_score": round(slope_score, 4),
+                 "atr_norm": round(atr, 4)}
 
 
 def _vol_score(snapshot: dict) -> tuple[float, dict]:

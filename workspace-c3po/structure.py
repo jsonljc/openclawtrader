@@ -20,11 +20,41 @@ from datetime import datetime, timezone, timedelta, time as dtime
 from typing import Any
 
 
+from shared.utils import round_to_tick
+
 try:
     import zoneinfo
     ET = zoneinfo.ZoneInfo("America/New_York")
 except ImportError:
     ET = timezone(timedelta(hours=-5))
+
+
+# ---------------------------------------------------------------------------
+# Per-instrument session definitions
+# ---------------------------------------------------------------------------
+
+_STRUCTURE_SESSIONS = {
+    "equity_index": {"rth": (dtime(9, 30), dtime(16, 0)),  "or_end": dtime(9, 45),  "ib_end": dtime(10, 30)},
+    "energy":       {"rth": (dtime(9, 0),  dtime(14, 30)), "or_end": dtime(9, 15),  "ib_end": dtime(10, 0)},
+    "metals":       {"rth": (dtime(8, 20), dtime(13, 30)), "or_end": dtime(8, 35),  "ib_end": dtime(9, 20)},
+    "rates":        {"rth": (dtime(8, 20), dtime(15, 0)),  "or_end": dtime(8, 35),  "ib_end": dtime(9, 20)},
+}
+
+_SYMBOL_TO_STRUCT_GROUP: dict[str, str] = {}
+for _grp, _syms in {
+    "equity_index": {"ES", "NQ", "MES", "MNQ"},
+    "energy":       {"CL", "MCL"},
+    "metals":       {"GC", "MGC"},
+    "rates":        {"ZB"},
+}.items():
+    for _s in _syms:
+        _SYMBOL_TO_STRUCT_GROUP[_s] = _grp
+
+
+def _get_session_cfg(symbol: str) -> dict:
+    """Return session config for a symbol, defaulting to equity_index."""
+    group = _SYMBOL_TO_STRUCT_GROUP.get(symbol, "equity_index")
+    return _STRUCTURE_SESSIONS[group]
 
 
 # ---------------------------------------------------------------------------
@@ -136,22 +166,28 @@ def _to_et(dt: datetime) -> datetime:
     return dt.astimezone(ET)
 
 
-def _is_rth(dt_et: datetime) -> bool:
-    """Is this bar during Regular Trading Hours (9:30-16:00 ET)?"""
+def _is_rth(dt_et: datetime, symbol: str = "ES") -> bool:
+    """Is this bar during Regular Trading Hours?"""
+    cfg = _get_session_cfg(symbol)
     t = dt_et.time()
-    return dtime(9, 30) <= t < dtime(16, 0)
+    rth_start, rth_end = cfg["rth"]
+    return rth_start <= t < rth_end
 
 
-def _is_or_period(dt_et: datetime) -> bool:
-    """Is this bar in the Opening Range period (9:30-9:45 ET)?"""
+def _is_or_period(dt_et: datetime, symbol: str = "ES") -> bool:
+    """Is this bar in the Opening Range period?"""
+    cfg = _get_session_cfg(symbol)
     t = dt_et.time()
-    return dtime(9, 30) <= t < dtime(9, 45)
+    rth_start = cfg["rth"][0]
+    return rth_start <= t < cfg["or_end"]
 
 
-def _is_ib_period(dt_et: datetime) -> bool:
-    """Is this bar in the Initial Balance period (9:30-10:30 ET)?"""
+def _is_ib_period(dt_et: datetime, symbol: str = "ES") -> bool:
+    """Is this bar in the Initial Balance period?"""
+    cfg = _get_session_cfg(symbol)
     t = dt_et.time()
-    return dtime(9, 30) <= t < dtime(10, 30)
+    rth_start = cfg["rth"][0]
+    return rth_start <= t < cfg["ib_end"]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +198,8 @@ def compute_structure(
     bars_5m: list[dict],
     bars_daily: list[dict] | None = None,
     now_utc: datetime | None = None,
+    symbol: str = "ES",
+    tick_size: float = 0.25,
 ) -> StructureLevels:
     """
     Compute all structural levels from 5-minute bars.
@@ -170,6 +208,8 @@ def compute_structure(
         bars_5m:     List of 5m bars [{t, o, h, l, c, v}, ...] covering today + overnight.
         bars_daily:  Optional daily bars for prior day OHLC. If None, inferred from 5m bars.
         now_utc:     Current UTC time. Defaults to now.
+        symbol:      Instrument symbol for session time lookup.
+        tick_size:   Tick size for price rounding.
 
     Returns:
         StructureLevels with all computed values.
@@ -197,7 +237,7 @@ def compute_structure(
         bar_date = dt_et.date()
 
         if bar_date == today:
-            if _is_rth(dt_et):
+            if _is_rth(dt_et, symbol):
                 rth_bars.append(bar)
                 # VWAP: accumulate during RTH
                 typical = (bar["h"] + bar["l"] + bar["c"]) / 3.0
@@ -205,15 +245,15 @@ def compute_structure(
                 if volume > 0:
                     vwap_state.update(typical, volume)
 
-                if _is_or_period(dt_et):
+                if _is_or_period(dt_et, symbol):
                     or_bars.append(bar)
-                if _is_ib_period(dt_et):
+                if _is_ib_period(dt_et, symbol):
                     ib_bars.append(bar)
             else:
                 # Pre-market / overnight for today
                 overnight_bars.append(bar)
         elif bar_date == today - timedelta(days=1):
-            if _is_rth(dt_et):
+            if _is_rth(dt_et, symbol):
                 prior_day_bars.append(bar)
             else:
                 overnight_bars.append(bar)
@@ -222,25 +262,25 @@ def compute_structure(
             overnight_bars.append(bar)
 
     # --- VWAP ---
-    levels.vwap = round(vwap_state.vwap, 2)
+    levels.vwap = round_to_tick(vwap_state.vwap, tick_size)
     sd = vwap_state.std_dev
-    levels.vwap_upper_1sd = round(levels.vwap + sd, 2)
-    levels.vwap_lower_1sd = round(levels.vwap - sd, 2)
+    levels.vwap_upper_1sd = round_to_tick(levels.vwap + sd, tick_size)
+    levels.vwap_lower_1sd = round_to_tick(levels.vwap - sd, tick_size)
 
     # --- Opening Range ---
     if or_bars:
         levels.or_high = max(b["h"] for b in or_bars)
         levels.or_low = min(b["l"] for b in or_bars)
-        levels.or_width = round(levels.or_high - levels.or_low, 2)
-        # OR is complete if we're past 9:45 ET
-        levels.or_complete = now_et.time() >= dtime(9, 45)
+        levels.or_width = round_to_tick(levels.or_high - levels.or_low, tick_size)
+        # OR is complete if we're past OR end time
+        levels.or_complete = now_et.time() >= _get_session_cfg(symbol)["or_end"]
 
     # --- Initial Balance ---
     if ib_bars:
         levels.ib_high = max(b["h"] for b in ib_bars)
         levels.ib_low = min(b["l"] for b in ib_bars)
-        levels.ib_width = round(levels.ib_high - levels.ib_low, 2)
-        levels.ib_complete = now_et.time() >= dtime(10, 30)
+        levels.ib_width = round_to_tick(levels.ib_high - levels.ib_low, tick_size)
+        levels.ib_complete = now_et.time() >= _get_session_cfg(symbol)["ib_end"]
 
     # --- Prior Day OHLC ---
     if bars_daily and len(bars_daily) >= 2:
@@ -263,7 +303,7 @@ def compute_structure(
     # --- Gap ---
     if levels.prior_day_close > 0 and rth_bars:
         today_open = rth_bars[0]["o"]
-        levels.gap_size = round(today_open - levels.prior_day_close, 2)
+        levels.gap_size = round_to_tick(today_open - levels.prior_day_close, tick_size)
         if levels.gap_size > 0:
             levels.gap_direction = "UP"
         elif levels.gap_size < 0:

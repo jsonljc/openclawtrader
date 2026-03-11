@@ -19,6 +19,8 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta, time as dtime
 from typing import Any
 
+from shared.utils import round_to_tick
+
 try:
     import zoneinfo
     ET = zoneinfo.ZoneInfo("America/New_York")
@@ -85,6 +87,7 @@ def detect(
     entry_price = 0.0
     stop_price = 0.0
 
+    tick = strategy.get("tick_size", 0.25)
     min_stop_pts = signal_cfg.get("min_stop_points", 4)
     target_multiple = signal_cfg.get("target_or_width_multiple", 1.5)
 
@@ -97,8 +100,8 @@ def detect(
         if entry_price - stop_price < min_stop_pts:
             stop_price = entry_price - min_stop_pts
         # T1 at 1.0× OR width, T2 at 2.0× OR width
-        t1_price = round(or_high + 1.0 * or_width, 2)
-        t2_price = round(or_high + 2.0 * or_width, 2)
+        t1_price = round_to_tick(or_high + 1.0 * or_width, tick)
+        t2_price = round_to_tick(or_high + 2.0 * or_width, tick)
         target_price = t2_price  # overall target for R:R calculation
 
     elif close < or_low and (vwap <= 0 or close < vwap):
@@ -109,8 +112,8 @@ def detect(
         # Enforce minimum stop distance
         if stop_price - entry_price < min_stop_pts:
             stop_price = entry_price + min_stop_pts
-        t1_price = round(or_low - 1.0 * or_width, 2)
-        t2_price = round(or_low - 2.0 * or_width, 2)
+        t1_price = round_to_tick(or_low - 1.0 * or_width, tick)
+        t2_price = round_to_tick(or_low - 2.0 * or_width, tick)
         target_price = t2_price
 
     else:
@@ -131,9 +134,9 @@ def detect(
 
     return {
         "side": side,
-        "entry_price": round(entry_price, 2),
-        "stop_price": round(stop_price, 2),
-        "target_price": round(target_price, 2),
+        "entry_price": round_to_tick(entry_price, tick),
+        "stop_price": round_to_tick(stop_price, tick),
+        "target_price": round_to_tick(target_price, tick),
         "setup_family": "ORB",
         "scale_out_plan": {
             "t1_pct": 50,

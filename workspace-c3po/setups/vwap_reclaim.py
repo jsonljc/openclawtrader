@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from shared.utils import round_to_tick
+
 
 def _bars_on_side(bars: list[dict], vwap: float, side: str) -> int:
     """Count consecutive recent bars with close on one side of VWAP.
@@ -81,6 +83,7 @@ def detect(
     if atr <= 0:
         return None
 
+    tick = strategy.get("tick_size", 0.25)
     min_bars_wrong_side = signal_cfg.get("min_bars_on_wrong_side", 3)
     stop_atr_mult = signal_cfg.get("stop_atr_multiple", 0.5)
 
@@ -105,9 +108,9 @@ def detect(
         entry_price = current_close
         stop_price = vwap - stop_atr_mult * atr
         # T1: 0.5 × ATR from entry, T2: nearest structural level or 1.0 × ATR
-        t1_price = round(entry_price + 0.5 * atr, 2)
+        t1_price = round_to_tick(entry_price + 0.5 * atr, tick)
         target_price = entry_price + atr  # default T2
-        t2_price = round(target_price, 2)
+        t2_price = round_to_tick(target_price, tick)
 
     # --- REJECT (Short): price was above VWAP for 3+ bars, now crosses below ---
     bars_above = _bars_on_side(prev_bars, vwap, "ABOVE")
@@ -115,9 +118,9 @@ def detect(
         side = "SELL"
         entry_price = current_close
         stop_price = vwap + stop_atr_mult * atr
-        t1_price = round(entry_price - 0.5 * atr, 2)
+        t1_price = round_to_tick(entry_price - 0.5 * atr, tick)
         target_price = entry_price - atr  # default T2
-        t2_price = round(target_price, 2)
+        t2_price = round_to_tick(target_price, tick)
 
     if side is None:
         return None
@@ -132,7 +135,7 @@ def detect(
         struct_target = get_nearest_structure_level(entry_price, levels, "LONG" if side == "BUY" else "SHORT")
         if struct_target is not None:
             target_price = struct_target
-            t2_price = round(target_price, 2)
+            t2_price = round_to_tick(target_price, tick)
     except Exception:
         pass  # Use ATR-based target as fallback
 
@@ -147,9 +150,9 @@ def detect(
 
     return {
         "side": side,
-        "entry_price": round(entry_price, 2),
-        "stop_price": round(stop_price, 2),
-        "target_price": round(target_price, 2),
+        "entry_price": round_to_tick(entry_price, tick),
+        "stop_price": round_to_tick(stop_price, tick),
+        "target_price": round_to_tick(target_price, tick),
         "setup_family": "VWAP",
         "scale_out_plan": {
             "t1_pct": 50,

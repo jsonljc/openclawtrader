@@ -29,6 +29,7 @@ from shared.contract_calendar import next_contract_month
 
 from regime import compute_regime as _compute_regime
 from health import evaluate_strategy_health
+from shared.utils import round_to_tick
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +148,7 @@ def _evaluate_trend_reclaim_4H(
     if price is None or ma20 is None:
         return None
 
+    tick       = strategy.get("tick_size", 0.25)
     adx_min    = strategy.get("signal", {}).get("adx_min", 25)
     stop_mult  = strategy.get("signal", {}).get("stop_atr_multiple", 1.5)
     tp_mult    = strategy.get("signal", {}).get("tp_atr_multiple", 1.5)
@@ -157,8 +159,8 @@ def _evaluate_trend_reclaim_4H(
         tp_dist   = atr_4h * tp_mult
         return {
             "side":       "BUY",
-            "stop_price": round(price - stop_dist, 2),
-            "tp_price":   round(price + tp_dist, 2),
+            "stop_price": round_to_tick(price - stop_dist, tick),
+            "tp_price":   round_to_tick(price + tp_dist, tick),
             "stop_dist":  round(stop_dist, 4),
             "tp_dist":    round(tp_dist, 4),
             "atr_used":   atr_4h,
@@ -171,8 +173,8 @@ def _evaluate_trend_reclaim_4H(
         tp_dist   = atr_4h * tp_mult
         return {
             "side":       "SELL",
-            "stop_price": round(price + stop_dist, 2),
-            "tp_price":   round(price - tp_dist, 2),
+            "stop_price": round_to_tick(price + stop_dist, tick),
+            "tp_price":   round_to_tick(price - tp_dist, tick),
             "stop_dist":  round(stop_dist, 4),
             "tp_dist":    round(tp_dist, 4),
             "atr_used":   atr_4h,
