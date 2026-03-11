@@ -8,6 +8,8 @@ Public API:
     run_forge(approvals, snapshots, run_id, paper=True) -> list[receipt]
     process_bracket_triggers(snapshots, run_id, paper=True) -> list[closed]
     close_position(position, exit_result, run_id) -> None
+    run_reconciliation_ib(run_id) -> dict          # IB position reconciliation
+    verify_ib_brackets(run_id) -> dict             # IB bracket verification
 """
 
 from __future__ import annotations
@@ -534,6 +536,196 @@ def close_position(
 # Roll execution — Phase 3: close front month, open next month
 # ---------------------------------------------------------------------------
 
+def _execute_roll_ib(
+    approval: dict,
+    intent: dict,
+    snapshots: dict[str, dict],
+    run_id: str,
+) -> dict:
+    """Execute a roll via IB: close front month position, open next month."""
+    from ib_gateway import get_connection
+    from ib_broker import execute_market_order, place_bracket_orders, cancel_bracket
+    from ib_insync import Future
+
+    exec_id = IDs.make_execution_id()
+    idem_key = IDs.make_idempotency_key(approval["approval_id"])
+
+    # Idempotency
+    existing = _check_idempotency(idem_key)
+    if existing:
+        return {
+            "execution_id": exec_id, "approval_id": approval["approval_id"],
+            "idempotency_key": idem_key, "status": "DUPLICATE_CATCH",
+            "message": "Duplicate roll prevented", "existing": existing,
+        }
+
+    portfolio = store.load_portfolio()
+    position_id = approval.get("position_id") or intent.get("position_id")
+    pos = next((p for p in portfolio["positions"] if p.get("position_id") == position_id), None)
+    if not pos:
+        return {
+            "execution_id": exec_id, "approval_id": approval["approval_id"],
+            "status": C.ExecStatus.FAILED, "reason": f"Position {position_id} not found",
+        }
+
+    symbol = intent.get("symbol", "ES")
+    side = pos.get("side", "LONG")
+    contracts = pos.get("contracts", 1)
+    strategy = store.load_strategy_registry().get(intent.get("strategy_id", ""), {})
+    use_micro = approval.get("sizing_final", {}).get("use_micro", False)
+    tick_size = strategy.get("tick_size", 0.25)
+    tick_value = (strategy.get("micro_tick_value_usd", 1.25) if use_micro
+                  else strategy.get("tick_value_usd", 12.50))
+    point_value = (strategy.get("micro_point_value_usd", 5.0) if use_micro
+                   else strategy.get("point_value_usd", 50.0))
+    fee_rt = strategy.get("fee_per_contract_round_trip_usd", 4.62)
+    margin_per_c = (strategy.get("micro_margin_per_contract_usd", 1584.0) if use_micro
+                    else strategy.get("margin_per_contract_usd", 15840.0))
+
+    ib = get_connection()
+
+    # Step 1: Cancel existing brackets on the old position
+    bracket_status = pos.get("bracket_status", {})
+    old_bracket_ids = [
+        bracket_status.get("stop_order_id", ""),
+        bracket_status.get("tp_order_id", ""),
+    ]
+    old_bracket_ids = [oid for oid in old_bracket_ids if oid.startswith("IB_")]
+    if old_bracket_ids:
+        cancel_bracket(ib, old_bracket_ids)
+
+    # Step 2: Close old position via IB market order
+    close_side = "SELL" if side == "LONG" else "BUY"
+    ib_symbol_old = ("MES" if use_micro and symbol == "ES" else
+                     "MNQ" if use_micro and symbol == "NQ" else symbol)
+    old_contract = Future(ib_symbol_old, exchange="CME", currency="USD")
+    qualified = ib.qualifyContracts(old_contract)
+    if qualified:
+        old_contract = qualified[0]
+
+    ledger.append(C.EventType.ORDER_SENT, run_id, exec_id, {
+        "execution_id": exec_id, "approval_id": approval["approval_id"],
+        "idempotency_key": idem_key, "symbol": symbol, "side": close_side,
+        "contracts": contracts, "execution_mode": "IB", "roll_phase": "CLOSE",
+    })
+
+    close_fill = execute_market_order(
+        ib, old_contract, close_side, contracts,
+        tick_size=tick_size, tick_value_usd=tick_value,
+        point_value_usd=point_value, fee_per_contract_round_trip_usd=fee_rt,
+    )
+
+    if close_fill["status"] in ("REJECTED", "TIMED_OUT"):
+        ledger.append(C.EventType.ORDER_REJECTED, run_id, exec_id, {
+            "execution_id": exec_id, "reason": close_fill.get("reason", "Roll close failed"),
+            "roll_phase": "CLOSE",
+        })
+        alerting.alert("HALT", f"ROLL CLOSE FAILED for {symbol} — position still open",
+                       {"execution_id": exec_id, "reason": close_fill.get("reason")})
+        return {
+            "execution_id": exec_id, "approval_id": approval["approval_id"],
+            "status": C.ExecStatus.FAILED, "reason": f"Roll close failed: {close_fill.get('reason')}",
+        }
+
+    # Update portfolio: close old position
+    close_price = close_fill["fill_price"]
+    close_record = close_position(pos, close_price, "ROLL", run_id)
+
+    # Step 3: Open new position in next contract month
+    roll_to = approval.get("roll_to", intent.get("roll_to", ""))
+    open_side = "BUY" if side == "LONG" else "SELL"
+    contracts_to_open = approval.get("sizing_final", {}).get(
+        "contracts_allowed", contracts)
+
+    # Resolve new contract
+    ib_symbol_new = ib_symbol_old  # Same instrument, different month
+    new_contract = Future(ib_symbol_new, exchange="CME", currency="USD")
+    qualified = ib.qualifyContracts(new_contract)
+    if qualified:
+        new_contract = qualified[0]
+
+    open_fill = execute_market_order(
+        ib, new_contract, open_side, contracts_to_open,
+        tick_size=tick_size, tick_value_usd=tick_value,
+        point_value_usd=point_value, fee_per_contract_round_trip_usd=fee_rt,
+    )
+
+    if open_fill["status"] in ("REJECTED", "TIMED_OUT"):
+        ledger.append(C.EventType.ORDER_REJECTED, run_id, exec_id, {
+            "execution_id": exec_id, "reason": open_fill.get("reason", "Roll open failed"),
+            "roll_phase": "OPEN",
+        })
+        alerting.alert("HALT", f"ROLL OPEN FAILED for {symbol} — old position closed but new not opened",
+                       {"execution_id": exec_id, "reason": open_fill.get("reason")})
+        return {
+            "execution_id": exec_id, "approval_id": approval["approval_id"],
+            "status": C.ExecStatus.FAILED,
+            "reason": f"Roll open failed (old position already closed): {open_fill.get('reason')}",
+            "closed_pnl": close_record.get("realized_pnl"),
+        }
+
+    fill_price = open_fill["fill_price"]
+    contracts_filled = open_fill["contracts_filled"]
+
+    # Step 4: Place brackets on new position
+    stop_price = approval.get("stop_plan", {}).get("price", fill_price - 50)
+    tp_price = approval.get("take_profit_plan", {}).get("price", fill_price + 50)
+
+    try:
+        bracket = place_bracket_orders(
+            ib, new_contract, open_fill.get("prng_seed", 0),
+            open_side, contracts_filled, stop_price, tp_price,
+        )
+    except Exception as exc:
+        # Emergency flatten the new position
+        reverse_side = "SELL" if open_side == "BUY" else "BUY"
+        execute_market_order(ib, new_contract, reverse_side, contracts_filled,
+                             tick_size=tick_size, tick_value_usd=tick_value,
+                             point_value_usd=point_value, fee_per_contract_round_trip_usd=fee_rt)
+        alerting.alert("HALT", f"ROLL BRACKET FAILED for {symbol} — emergency flattened",
+                       {"execution_id": exec_id, "reason": str(exc)})
+        return {
+            "execution_id": exec_id, "approval_id": approval["approval_id"],
+            "status": C.ExecStatus.EMERGENCY_FLATTENED,
+            "reason": f"Roll bracket failed — emergency flatten: {exc}",
+            "closed_pnl": close_record.get("realized_pnl"),
+        }
+
+    # Step 5: Register new position
+    approval_roll = dict(approval)
+    approval_roll.update({
+        "strategy_id": intent.get("strategy_id"),
+        "symbol": symbol, "contract_month": roll_to,
+        "side": open_side, "stop_plan": {"price": stop_price},
+        "take_profit_plan": {"price": tp_price},
+        "margin_per_contract_usd": margin_per_c,
+        "point_value_usd": point_value,
+        "correlation_group": strategy.get("correlation_group", ""),
+    })
+
+    new_pos = _register_position(approval_roll, open_fill, bracket, run_id)
+
+    ledger.append(C.EventType.BRACKET_CONFIRMED, run_id, new_pos["position_id"], {
+        "execution_id": exec_id, "position_id": new_pos["position_id"],
+        "approval_id": approval["approval_id"],
+        "stop": bracket["stop"], "take_profit": bracket["take_profit"],
+    })
+
+    alerting.alert("INFO", f"Roll complete: {symbol} {roll_to} {contracts_filled}ct @ {fill_price}",
+                   {"position_id": new_pos["position_id"], "closed_pnl": close_record.get("realized_pnl")})
+
+    return {
+        "execution_id": exec_id, "approval_id": approval["approval_id"],
+        "status": C.ExecStatus.COMPLETE,
+        "position_id": new_pos["position_id"],
+        "roll_from": approval.get("roll_from"),
+        "roll_to": roll_to,
+        "closed_pnl": close_record.get("realized_pnl"),
+        "state": C.IntentState.COMPLETE,
+        "execution_mode": "IB",
+    }
+
+
 def execute_roll(
     approval: dict,
     intent: dict,
@@ -543,7 +735,7 @@ def execute_roll(
 ) -> dict:
     """Execute a roll: close position at current price, open same size in roll_to contract."""
     if not paper:
-        raise NotImplementedError("Live roll via IB not yet implemented — use paper mode for rolls")
+        return _execute_roll_ib(approval, intent, snapshots, run_id)
 
     # Idempotency check — same pattern as execute_approval
     idem_key = IDs.make_idempotency_key(approval["approval_id"])
@@ -1058,6 +1250,226 @@ def execute_approval(
                    {"position_id": position["position_id"], "strategy_id": intent.get("strategy_id")})
 
     return receipt
+
+
+# ---------------------------------------------------------------------------
+# IB position reconciliation — verify portfolio state matches IB reality
+# ---------------------------------------------------------------------------
+
+def run_reconciliation_ib(run_id: str) -> dict:
+    """
+    Query IB's actual positions and compare with portfolio.json.
+    Detects: phantom positions (in portfolio but not at IB), orphan positions
+    (at IB but not in portfolio), and quantity mismatches.
+
+    Returns reconciliation report dict.
+    On mismatch: logs ALERT, sends Telegram, sets posture to HALT.
+    """
+    from ib_gateway import get_connection
+
+    portfolio = store.load_portfolio()
+    our_positions = portfolio.get("positions", [])
+
+    ib = get_connection()
+    ib.sleep(1)  # Allow position data to settle
+
+    # Query IB positions
+    ib_positions = ib.positions()
+
+    # Build IB position map: (symbol, side) -> total contracts
+    # IB reports position as signed quantity: positive = long, negative = short
+    ib_pos_map: dict[tuple[str, str], float] = {}
+    _micro_to_standard = {"MES": "ES", "MNQ": "NQ", "MCL": "CL", "MBT": "BTC"}
+    for ib_pos in ib_positions:
+        contract = ib_pos.contract
+        sym = contract.localSymbol or contract.symbol or ""
+        # Normalize micro to standard symbol for comparison
+        base_sym = _micro_to_standard.get(sym, sym)
+        qty = ib_pos.position  # positive=long, negative=short
+        if qty == 0:
+            continue
+        side = "LONG" if qty > 0 else "SHORT"
+        key = (base_sym, side)
+        ib_pos_map[key] = ib_pos_map.get(key, 0) + abs(qty)
+
+    # Build our position map: (symbol, side) -> total contracts
+    our_pos_map: dict[tuple[str, str], float] = {}
+    for pos in our_positions:
+        sym = pos.get("symbol", "")
+        base_sym = _micro_to_standard.get(sym, sym)
+        side = pos.get("side", "LONG")
+        contracts = pos.get("contracts", 0)
+        key = (base_sym, side)
+        our_pos_map[key] = our_pos_map.get(key, 0) + contracts
+
+    # Compare
+    mismatches: list[dict] = []
+
+    # Check for phantom positions (in portfolio but not at IB)
+    for key, our_qty in our_pos_map.items():
+        ib_qty = ib_pos_map.get(key, 0)
+        if ib_qty == 0:
+            mismatches.append({
+                "type": "PHANTOM",
+                "symbol": key[0],
+                "side": key[1],
+                "portfolio_contracts": our_qty,
+                "ib_contracts": 0,
+                "message": f"Position in portfolio but NOT at IB: {key[0]} {key[1]} {our_qty}ct",
+            })
+        elif abs(ib_qty - our_qty) > 0.01:
+            mismatches.append({
+                "type": "QTY_MISMATCH",
+                "symbol": key[0],
+                "side": key[1],
+                "portfolio_contracts": our_qty,
+                "ib_contracts": ib_qty,
+                "message": f"Quantity mismatch: {key[0]} {key[1]} portfolio={our_qty} IB={ib_qty}",
+            })
+
+    # Check for orphan positions (at IB but not in portfolio)
+    for key, ib_qty in ib_pos_map.items():
+        if key not in our_pos_map:
+            mismatches.append({
+                "type": "ORPHAN",
+                "symbol": key[0],
+                "side": key[1],
+                "portfolio_contracts": 0,
+                "ib_contracts": ib_qty,
+                "message": f"Position at IB but NOT in portfolio: {key[0]} {key[1]} {ib_qty}ct",
+            })
+
+    report = {
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "portfolio_positions": len(our_positions),
+        "ib_positions": len([p for p in ib_positions if p.position != 0]),
+        "mismatches": mismatches,
+        "reconciled": len(mismatches) == 0,
+    }
+
+    if mismatches:
+        for m in mismatches:
+            print(f"  [RECONCILE] MISMATCH: {m['message']}")
+
+        ledger.append(C.EventType.ALERT, run_id, "RECONCILIATION", {
+            "alert_type": "POSITION_MISMATCH",
+            "mismatches": mismatches,
+        })
+
+        alerting.alert(
+            "HALT",
+            f"POSITION MISMATCH: {len(mismatches)} discrepancies detected",
+            {
+                "run_id": run_id,
+                "mismatches": "; ".join(m["message"] for m in mismatches),
+            },
+        )
+
+        # Set posture to HALT on mismatch
+        posture_state = store.load_posture_state()
+        posture_state["posture"] = C.Posture.HALT
+        posture_state["last_halt_at"] = datetime.now(timezone.utc).isoformat()
+        store.save_posture_state(posture_state)
+
+    ledger.append(C.EventType.RECONCILIATION, run_id, "IB_RECONCILE", {
+        "reconciled": report["reconciled"],
+        "portfolio_count": report["portfolio_positions"],
+        "ib_count": report["ib_positions"],
+        "mismatch_count": len(mismatches),
+    })
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# IB bracket verification — confirm stops are active at IB
+# ---------------------------------------------------------------------------
+
+def verify_ib_brackets(run_id: str) -> dict:
+    """
+    Query IB open orders and verify every open position has an active stop.
+    Returns verification report. Alerts on missing stops.
+    """
+    from ib_gateway import get_connection
+
+    portfolio = store.load_portfolio()
+    positions = portfolio.get("positions", [])
+    if not positions:
+        return {"run_id": run_id, "status": "OK", "positions_checked": 0, "missing_stops": []}
+
+    ib = get_connection()
+    ib.sleep(1)
+
+    # Get all open orders from IB
+    open_trades = ib.openTrades()
+    # Build set of active stop order IDs
+    active_stop_ids: set[str] = set()
+    for trade in open_trades:
+        order = trade.order
+        # StopOrder has orderType "STP"
+        if order.orderType in ("STP", "STP LMT"):
+            active_stop_ids.add(f"IB_{order.orderId}")
+
+    # Check each position
+    missing_stops: list[dict] = []
+    for pos in positions:
+        bracket = pos.get("bracket_status", {})
+        stop_order_id = bracket.get("stop_order_id", "")
+
+        # Only check IB-placed brackets (those starting with "IB_")
+        if not stop_order_id.startswith("IB_"):
+            continue
+
+        if stop_order_id not in active_stop_ids:
+            missing_stops.append({
+                "position_id": pos["position_id"],
+                "symbol": pos.get("symbol", ""),
+                "side": pos.get("side", ""),
+                "contracts": pos.get("contracts", 0),
+                "stop_order_id": stop_order_id,
+                "stop_price": pos.get("stop_price"),
+            })
+
+    report = {
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "positions_checked": len([p for p in positions
+                                  if p.get("bracket_status", {}).get("stop_order_id", "").startswith("IB_")]),
+        "active_stops_at_ib": len(active_stop_ids),
+        "missing_stops": missing_stops,
+        "status": "OK" if not missing_stops else "ALERT",
+    }
+
+    if missing_stops:
+        for m in missing_stops:
+            print(f"  [BRACKET] MISSING STOP: {m['position_id']} {m['symbol']} "
+                  f"{m['side']} — expected {m['stop_order_id']}")
+
+        ledger.append(C.EventType.ALERT, run_id, "BRACKET_VERIFY", {
+            "alert_type": "MISSING_STOP_ORDERS",
+            "missing": missing_stops,
+        })
+
+        alerting.alert(
+            "HALT",
+            f"MISSING STOP ORDERS: {len(missing_stops)} positions unprotected",
+            {
+                "run_id": run_id,
+                "positions": "; ".join(
+                    f"{m['symbol']} {m['side']} {m['contracts']}ct"
+                    for m in missing_stops
+                ),
+            },
+        )
+
+        # Set posture to HALT — unprotected positions are critical
+        posture_state = store.load_posture_state()
+        posture_state["posture"] = C.Posture.HALT
+        posture_state["last_halt_at"] = datetime.now(timezone.utc).isoformat()
+        store.save_posture_state(posture_state)
+
+    return report
 
 
 # ---------------------------------------------------------------------------

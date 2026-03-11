@@ -246,7 +246,7 @@ def run_reconciliation(
     portfolio = store.load_portfolio()
     positions = portfolio.get("positions", [])
 
-    # 1. Process bracket triggers
+    # 1. Process bracket triggers (paper) or IB reconciliation (live)
     closed: list[dict] = []
     if positions and paper:
         closed = forge.process_bracket_triggers(snapshots, run_id, paper=paper)
@@ -257,6 +257,26 @@ def run_reconciliation(
                      f"PnL=${c['realized_pnl']:.2f}")
             portfolio = store.load_portfolio()  # reload after closings
             positions = portfolio.get("positions", [])
+    elif positions and not paper:
+        # IB position reconciliation + bracket verification
+        try:
+            recon = forge.run_reconciliation_ib(run_id)
+            _log(f"  IB reconciliation: {'OK' if recon['reconciled'] else 'MISMATCH'}")
+            if not recon["reconciled"]:
+                for m in recon["mismatches"]:
+                    _log(f"    → {m['type']}: {m['message']}")
+        except Exception as exc:
+            _log(f"  ERROR in IB reconciliation: {exc}")
+
+        try:
+            bracket_report = forge.verify_ib_brackets(run_id)
+            _log(f"  IB bracket check: {bracket_report['status']} "
+                 f"({bracket_report['positions_checked']} checked)")
+            if bracket_report["missing_stops"]:
+                for m in bracket_report["missing_stops"]:
+                    _log(f"    → MISSING STOP: {m['position_id']} {m['symbol']}")
+        except Exception as exc:
+            _log(f"  ERROR in IB bracket check: {exc}")
 
     # 2. Mark-to-market open positions
     for pos in positions:

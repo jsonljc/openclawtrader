@@ -296,6 +296,21 @@ def run_intraday_cycle(
                 portfolio = store.load_portfolio()
         except Exception as exc:
             _log(f"  ERROR in bracket triggers: {exc}")
+    else:
+        # Live mode: IB position reconciliation + bracket verification
+        portfolio = store.load_portfolio()
+        if portfolio.get("positions"):
+            try:
+                recon = forge.run_reconciliation_ib(run_id)
+                _log(f"  IB reconciliation: {'OK' if recon['reconciled'] else 'MISMATCH'}")
+            except Exception as exc:
+                _log(f"  ERROR in IB reconciliation: {exc}")
+
+            try:
+                bracket_report = forge.verify_ib_brackets(run_id)
+                _log(f"  IB bracket check: {bracket_report['status']}")
+            except Exception as exc:
+                _log(f"  ERROR in IB bracket check: {exc}")
 
     # 8. Setup scanning
     intents = _scan_setups(
