@@ -28,7 +28,7 @@
   "contract_expiry": "2026-08-27",
   "incubation": {
     "is_incubating": true,
-    "incubation_size_pct": 100,
+    "incubation_size_pct": 25,
     "incubation_trades_target": 50
   }
 }

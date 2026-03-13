@@ -36,9 +36,15 @@ from shared.utils import round_to_tick
 # Regime scoring — delegated to regime.py (Phase 2)
 # ---------------------------------------------------------------------------
 
-def _compute_regime_for_snapshot(snapshot: dict, portfolio: dict, param_version: str, run_id: str) -> dict:
+def _compute_regime_for_snapshot(
+    snapshot: dict, portfolio: dict, param_version: str, run_id: str,
+    all_snapshots: dict | None = None,
+) -> dict:
     """Delegate to regime.py for full sigmoid-weighted scoring."""
-    return _compute_regime(snapshot, portfolio, param_version, run_id, snapshot.get("asof"))
+    return _compute_regime(
+        snapshot, portfolio, param_version, run_id, snapshot.get("asof"),
+        all_snapshots=all_snapshots,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +382,6 @@ def _build_roll_intent(
 _SIGNAL_HANDLERS = {
     "trend_reclaim_4H_ES":  _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_NQ":  _evaluate_trend_reclaim_4H,
-    "trend_reclaim_4H_BTC": _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_CL":  _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_GC":  _evaluate_trend_reclaim_4H,
     "trend_reclaim_4H_ZB":  _evaluate_trend_reclaim_4H,
@@ -418,7 +423,8 @@ def run_brain(
             continue
 
         # Compute regime and health reports
-        regime = _compute_regime_for_snapshot(snap, portfolio, param_version, run_id)
+        regime = _compute_regime_for_snapshot(snap, portfolio, param_version, run_id,
+                                              all_snapshots=snapshots)
         health = _evaluate_strategy_health(strategy, param_version)
         if regime_report is None:
             regime_report = regime

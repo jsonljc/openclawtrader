@@ -76,6 +76,54 @@ def _corr_score(snapshot: dict, portfolio: dict) -> tuple[float, dict]:
     return raw, {"max_corr_20d": round(max_corr, 4), "pairs": len(corrs)}
 
 
+def _cross_asset_score(snapshot: dict, all_snapshots: dict | None = None) -> tuple[float, dict]:
+    """
+    Cross-asset regime driver.
+    Detects risk-off conditions: bonds (ZB) and gold (GC) rallying simultaneously
+    suggests flight-to-safety, which degrades equity_beta regime score.
+    Returns 1.0 = risk-on, 0.0 = strong risk-off signal.
+    """
+    if not all_snapshots or len(all_snapshots) < 2:
+        return 0.5, {"note": "no cross-asset data"}
+
+    zb_snap = all_snapshots.get("ZB", {})
+    gc_snap = all_snapshots.get("GC", {})
+
+    zb_slope = zb_snap.get("indicators", {}).get("ma_20_slope", 0.0)
+    gc_slope = gc_snap.get("indicators", {}).get("ma_20_slope", 0.0)
+    zb_atr = zb_snap.get("indicators", {}).get("atr_14_1H", 1.0)
+    gc_atr = gc_snap.get("indicators", {}).get("atr_14_1H", 1.0)
+
+    # Normalize slopes by ATR (price-scale independent)
+    zb_norm = (zb_slope / zb_atr) if zb_atr > 0 else 0.0
+    gc_norm = (gc_slope / gc_atr) if gc_atr > 0 else 0.0
+
+    # Both rising (positive slope) = risk-off for equities
+    zb_rising = zb_norm > 0.001
+    gc_rising = gc_norm > 0.001
+    detail: dict = {
+        "zb_slope_norm": round(zb_norm, 6),
+        "gc_slope_norm": round(gc_norm, 6),
+        "zb_rising": zb_rising,
+        "gc_rising": gc_rising,
+    }
+
+    if zb_rising and gc_rising:
+        # Both safe havens rallying — strong risk-off
+        strength = min(1.0, (abs(zb_norm) + abs(gc_norm)) * 100)
+        raw = max(0.0, 1.0 - strength)
+        detail["signal"] = "RISK_OFF_DUAL"
+    elif zb_rising or gc_rising:
+        # One haven rallying — mild caution
+        raw = 0.65
+        detail["signal"] = "RISK_OFF_MILD"
+    else:
+        raw = 0.8  # neutral-to-favorable
+        detail["signal"] = "NEUTRAL"
+
+    return round(raw, 4), detail
+
+
 def _liquidity_score(snapshot: dict) -> tuple[float, dict]:
     """
     Liquidity driver: spread + book depth.
@@ -101,6 +149,7 @@ def compute_regime(
     param_version: str = "PV_0001",
     run_id: str = "",
     asof: str | None = None,
+    all_snapshots: dict | None = None,
 ) -> dict:
     """
     Full regime scoring per spec 6.4.
@@ -122,13 +171,18 @@ def compute_regime(
     vol_raw, vol_detail = _vol_score(snapshot)
     corr_raw, corr_detail = _corr_score(snapshot, portfolio)
     liq_raw, liq_detail = _liquidity_score(snapshot)
+    cross_raw, cross_detail = _cross_asset_score(snapshot, all_snapshots)
 
-    # Weighted regime score
+    # Weighted regime score (cross-asset blended at 10% weight, taken from corr)
+    w_cross = 0.10 if all_snapshots else 0.0
+    w_corr_adj = w_corr - w_cross  # reduce corr weight to make room
+
     regime_score = (
         w_trend * trend_raw +
         w_vol * vol_raw +
-        w_corr * corr_raw +
-        w_liquidity * liq_raw
+        w_corr_adj * corr_raw +
+        w_liquidity * liq_raw +
+        w_cross * cross_raw
     )
     regime_score = max(0.0, min(1.0, regime_score))
 
@@ -160,8 +214,9 @@ def compute_regime(
     drivers: dict[str, Any] = {
         "trend_score":       {"raw": round(trend_raw, 4), "weight": w_trend, "detail": trend_detail},
         "vol_percentile":    {"raw": round(vol_raw, 4), "weight": w_vol, "detail": vol_detail},
-        "corr_stress":       {"raw": round(corr_raw, 4), "weight": w_corr, "detail": corr_detail},
+        "corr_stress":       {"raw": round(corr_raw, 4), "weight": round(w_corr_adj, 4), "detail": corr_detail},
         "liquidity_score":   {"raw": round(liq_raw, 4), "weight": w_liquidity, "detail": liq_detail},
+        "cross_asset":       {"raw": round(cross_raw, 4), "weight": round(w_cross, 4), "detail": cross_detail},
     }
 
     report_id = f"RR_{asof[:16].replace('-', '').replace('T', '_').replace(':', '')}" if asof else "RR"

@@ -52,7 +52,7 @@
   "incubation": {
     "is_incubating": true,
     "incubation_start": "2026-03-11T00:00:00Z",
-    "incubation_size_pct": 100,
+    "incubation_size_pct": 25,
     "incubation_min_trades": 50,
     "incubation_min_days": 30
   }

@@ -672,10 +672,10 @@ def evaluate_intent(
     base_risk_pct = strategy.get("risk_budget_pct", 0.5)
     base_risk_usd = equity * base_risk_pct / 100.0
 
-    # Regime modifier (Phase 2) — from brain's regime report
-    regime_mod = 1.0
-    if regime_report:
-        regime_mod = regime_report.get("risk_multiplier", 1.0)
+    # Regime modifier — SKIP here; C3PO already applies regime_mod in
+    # _suggest_sizing (brain.py:222).  Applying it again would square the
+    # effect (e.g. 0.80 → 0.64).  Sentinel adds its own modifiers
+    # (posture, streak, vol_scalar) that C3PO does not compute.
 
     # Health modifier — from brain's health report for this strategy
     health_mod = 1.0
@@ -735,7 +735,7 @@ def evaluate_intent(
     incub = strategy.get("incubation", {})
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
-    final_risk_usd = base_risk_usd * regime_mod * health_mod * posture_mod * session_mod * streak_mod * vol_scalar * incub_mod
+    final_risk_usd = base_risk_usd * health_mod * posture_mod * session_mod * streak_mod * vol_scalar * incub_mod
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)

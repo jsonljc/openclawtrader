@@ -51,7 +51,7 @@ def evaluate_strategy_health(
             "realized_dd_pct": 0.0,
             "expected_dd_pct": strategy.get("expected_max_dd_pct", 10.0),
             "realized_sharpe_30d": 0.0,
-            "expected_sharpe": strategy.get("expected_sharpe", 1.2),
+            "expected_sharpe": strategy.get("expected_sharpe", 0.7),
             "realized_hit_rate_30d": 0.0,
             "expected_hit_rate": strategy.get("expected_hit_rate", 0.45),
             "avg_slippage_ticks_30d": 1.0,
