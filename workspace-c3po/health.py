@@ -98,7 +98,7 @@ def evaluate_strategy_health(
                 consec = 0
 
         exp_dd = strategy.get("expected_max_dd_pct", 10.0)
-        exp_sharpe = strategy.get("expected_sharpe", 1.2)
+        exp_sharpe = strategy.get("expected_sharpe", 0.7)
         exp_hr = strategy.get("expected_hit_rate", 0.45)
         exp_slip = strategy.get("expected_avg_slippage_ticks", 1.0)
 

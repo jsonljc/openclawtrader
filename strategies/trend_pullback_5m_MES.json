@@ -26,7 +26,7 @@
   "micro_margin_per_contract_usd": 1584,
   "incubation": {
     "is_incubating": true,
-    "incubation_size_pct": 5,
+    "incubation_size_pct": 25,
     "incubation_trades_target": 30
   }
 }
