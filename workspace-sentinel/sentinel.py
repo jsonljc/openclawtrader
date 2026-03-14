@@ -280,13 +280,40 @@ def check_idempotency(intent: dict, portfolio: dict) -> tuple[bool, str]:
             return False, f"Active position already exists for {strategy_id}/{symbol}/{position_side}"
 
     # Check 3: conflicting pending intent (same strategy+symbol, non-terminal, NOT this intent)
+    # Build mapping: approval_id → intent_id (from APPROVAL_ISSUED events)
+    approval_to_intent: dict[str, str] = {}
+    for entry in ledger.query(event_types=[C.EventType.APPROVAL_ISSUED], limit=5_000):
+        p = entry.get("payload", {})
+        aid = p.get("approval_id")
+        iid = p.get("intent_id")
+        if aid and iid:
+            approval_to_intent[aid] = iid
+
+    # Build set of intent_ids that have reached a terminal state
+    # Terminal events may carry intent_id directly or approval_id (which we map back)
+    _terminal_event_types = [
+        C.EventType.INTENT_DENIED, C.EventType.ORDER_FILLED,
+        C.EventType.BRACKET_CONFIRMED, C.EventType.ORDER_REJECTED,
+        C.EventType.ORDER_CANCELLED, C.EventType.ORDER_TIMED_OUT,
+    ]
+    resolved_ids: set[str] = set()
+    for entry in ledger.query(event_types=_terminal_event_types, limit=5_000):
+        p = entry.get("payload", {})
+        iid = p.get("intent_id")
+        if iid:
+            resolved_ids.add(iid)
+        aid = p.get("approval_id")
+        if aid and aid in approval_to_intent:
+            resolved_ids.add(approval_to_intent[aid])
+
     for entry in ledger.query(event_types=[C.EventType.INTENT_CREATED], limit=2_000):
         p = entry.get("payload", {})
-        if (p.get("intent_id") != intent_id
+        other_id = p.get("intent_id")
+        if (other_id != intent_id
+                and other_id not in resolved_ids
                 and p.get("strategy_id") == strategy_id
-                and p.get("symbol") == symbol
-                and p.get("state") not in C.IntentState.TERMINAL):
-            return False, f"Conflicting pending intent {p.get('intent_id')} for {strategy_id}/{symbol}"
+                and p.get("symbol") == symbol):
+            return False, f"Conflicting pending intent {other_id} for {strategy_id}/{symbol}"
 
     # Check 4: rapid-fire guard — same strategy approved within 60 sec
     now = datetime.now(timezone.utc)

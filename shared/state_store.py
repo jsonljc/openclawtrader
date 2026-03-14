@@ -24,8 +24,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", Path.home() / "openclaw-trader" / "data"))
 _REPO_ROOT = Path(__file__).parent.parent
+_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", _REPO_ROOT / "data"))
 _STRATEGIES_DIR = Path(os.environ.get("OPENCLAW_STRATEGIES", _REPO_ROOT / "strategies"))
 _PARAMS_DIR = Path(os.environ.get("OPENCLAW_PARAMS", _REPO_ROOT / "params"))
 

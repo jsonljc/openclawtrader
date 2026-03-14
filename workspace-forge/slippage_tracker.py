@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", Path.home() / "openclaw-trader" / "data"))
+_REPO_ROOT = Path(__file__).parent.parent
+_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", _REPO_ROOT / "data"))
 _SLIPPAGE_PATH = _DATA_DIR / "slippage_tracker.json"
 
 # Micro symbol mapping

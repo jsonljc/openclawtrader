@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
-_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", Path.home() / "openclaw-trader" / "data"))
+_REPO_ROOT = Path(__file__).parent.parent
+_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", _REPO_ROOT / "data"))
 _ALERT_LOG = Path(os.environ.get("OPENCLAW_ALERT_LOG", _DATA_DIR / "alerts.log"))
 _WEBHOOK_URL = os.environ.get("OPENCLAW_ALERT_WEBHOOK_URL", "").strip()
 _TELEGRAM_BOT_TOKEN = os.environ.get("OPENCLAW_TELEGRAM_BOT_TOKEN", "").strip()

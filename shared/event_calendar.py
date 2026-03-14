@@ -27,7 +27,8 @@ try:
 except ImportError:
     ET = timezone(timedelta(hours=-5))
 
-_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", Path.home() / "openclaw-trader" / "data"))
+_REPO_ROOT = Path(__file__).parent.parent
+_DATA_DIR = Path(os.environ.get("OPENCLAW_DATA", _REPO_ROOT / "data"))
 _CALENDAR_PATH = _DATA_DIR / "event_calendar.json"
 
 

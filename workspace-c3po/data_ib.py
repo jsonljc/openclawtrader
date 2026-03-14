@@ -72,7 +72,8 @@ def _make_vix_index():
 # ---------------------------------------------------------------------------
 
 def _vix_cache_path() -> Path:
-    data_dir = Path(os.environ.get("OPENCLAW_DATA", str(Path.home() / "openclaw-trader" / "data")))
+    repo_root = Path(__file__).parent.parent
+    data_dir = Path(os.environ.get("OPENCLAW_DATA", str(repo_root / "data")))
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "vix_cache.json"
 
