@@ -111,6 +111,10 @@ def _check_gates(
 
     # Gate 6: (Removed — rollover is handled before gate check)
 
+    # Extract symbol early — needed by Gate 6.5 and Gate 8
+    strategy_id = strategy.get("strategy_id", "")
+    symbol      = strategy.get("symbol", "")
+
     # Gate 6.5: Pre-event suppression (macro calendar blackout)
     event_check = check_event_suppression(symbol=symbol)
     if event_check["suppressed"]:
@@ -125,8 +129,6 @@ def _check_gates(
 
     # Gate 8: No duplicate intent (no open position for same strategy+symbol+side already enforced
     # by Sentinel idempotency check; C3PO pre-screens here to avoid emitting unnecessary intents)
-    strategy_id = strategy.get("strategy_id", "")
-    symbol      = strategy.get("symbol", "")
     for pos in portfolio.get("positions", []):
         if pos.get("strategy_id") == strategy_id and pos.get("symbol") == symbol:
             failures.append(f"Gate 8: active position already exists for {strategy_id}/{symbol}")
