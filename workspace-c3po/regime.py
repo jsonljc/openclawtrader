@@ -45,18 +45,78 @@ def _trend_score(snapshot: dict) -> tuple[float, dict]:
                  "atr_norm": round(atr, 4)}
 
 
-def _vol_score(snapshot: dict) -> tuple[float, dict]:
+def _vol_score(snapshot: dict, symbol: str = "ES") -> tuple[float, dict]:
     """
-    Volatility driver: VIX percentile.
-    Low vol (low percentile) = favorable; high vol = risk-off.
-    Invert: low percentile → high score.
+    Volatility driver: per-instrument vol source.
+    ES/NQ: VIX percentile.
+    CL/GC: ATR ratio (current ATR / 20-period ATR average).
+    ZB: MOVE index percentile (falls back to ATR ratio).
+    Low vol → high score (favorable); high vol → low score (risk-off).
     """
     ext = snapshot.get("external", {})
-    vix_pct = ext.get("vix_percentile_252d", 0.5)
-    # Invert: 0.2 percentile (low vol) → 0.8 score; 0.8 percentile (high vol) → 0.2 score
-    raw = 1.0 - vix_pct
-    raw = max(0.0, min(1.0, raw))
-    return raw, {"vix_percentile": vix_pct}
+    ind = snapshot.get("indicators", {})
+    sym = symbol.upper()
+
+    # Determine vol source by instrument group
+    if sym in ("ES", "NQ", "MES", "MNQ"):
+        # Equity index: use VIX percentile
+        vix_pct = ext.get("vix_percentile_252d", 0.5)
+        raw = 1.0 - vix_pct
+        raw = max(0.0, min(1.0, raw))
+        return raw, {"vol_source": "VIX", "vix_percentile": vix_pct}
+
+    if sym in ("ZB", "ZN", "ZF"):
+        # Rates: MOVE index percentile, fallback to ATR ratio
+        move_pct = ext.get("move_percentile_252d")
+        if move_pct is not None:
+            raw = 1.0 - move_pct
+            raw = max(0.0, min(1.0, raw))
+            return raw, {"vol_source": "MOVE", "move_percentile": move_pct}
+        # Fallback to ATR ratio
+        return _score_atr_ratio(snapshot, sym)
+
+    # CL, GC, and everything else: ATR ratio
+    return _score_atr_ratio(snapshot, sym)
+
+
+def _score_atr_ratio(snapshot: dict, symbol: str) -> tuple[float, dict]:
+    """
+    ATR ratio vol scoring for non-equity instruments.
+    Compares current ATR to 20-bar average range as a proxy for historical ATR.
+    Ratio > 1.5 → elevated vol (lower score); ratio < 0.8 → low vol (higher score).
+    """
+    ind = snapshot.get("indicators", {})
+    atr_current = ind.get("atr_14_1H", 0.0)
+    bars_1h = snapshot.get("bars", {}).get("1H", [])
+
+    if not bars_1h or atr_current <= 0:
+        return 0.5, {"vol_source": "ATR_RATIO", "symbol": symbol, "note": "no data, neutral"}
+
+    recent_ranges = []
+    for b in bars_1h[-20:]:
+        h = b.get("h", b.get("high", 0))
+        l = b.get("l", b.get("low", 0))
+        if h > 0 and l > 0:
+            recent_ranges.append(h - l)
+
+    if not recent_ranges:
+        return 0.5, {"vol_source": "ATR_RATIO", "symbol": symbol, "note": "no bar ranges"}
+
+    atr_avg = sum(recent_ranges) / len(recent_ranges)
+    if atr_avg <= 0:
+        return 0.5, {"vol_source": "ATR_RATIO", "symbol": symbol, "note": "zero avg range"}
+
+    ratio = atr_current / atr_avg
+
+    # Map ratio to score: ratio 0.5→0.9, 1.0→0.6, 1.5→0.3, 2.0+→0.1
+    raw = max(0.1, min(0.9, 1.2 - 0.6 * ratio))
+    return round(raw, 4), {
+        "vol_source": "ATR_RATIO",
+        "symbol": symbol,
+        "atr_current": round(atr_current, 4),
+        "atr_20_avg": round(atr_avg, 4),
+        "ratio": round(ratio, 4),
+    }
 
 
 def _corr_score(snapshot: dict, portfolio: dict) -> tuple[float, dict]:
@@ -150,6 +210,7 @@ def compute_regime(
     run_id: str = "",
     asof: str | None = None,
     all_snapshots: dict | None = None,
+    symbol: str = "ES",
 ) -> dict:
     """
     Full regime scoring per spec 6.4.
@@ -168,13 +229,17 @@ def compute_regime(
 
     # Compute each driver
     trend_raw, trend_detail = _trend_score(snapshot)
-    vol_raw, vol_detail = _vol_score(snapshot)
+    vol_raw, vol_detail = _vol_score(snapshot, symbol=symbol)
     corr_raw, corr_detail = _corr_score(snapshot, portfolio)
     liq_raw, liq_detail = _liquidity_score(snapshot)
     cross_raw, cross_detail = _cross_asset_score(snapshot, all_snapshots)
 
-    # Weighted regime score (cross-asset blended at 10% weight, taken from corr)
-    w_cross = 0.10 if all_snapshots else 0.0
+    # Cross-asset risk-off only applies to equity_beta instruments (ES/NQ)
+    sym_upper = symbol.upper()
+    is_equity = sym_upper in ("ES", "NQ", "MES", "MNQ")
+    w_cross = 0.10 if all_snapshots and is_equity else 0.0
+    if not is_equity:
+        cross_raw = 0.5  # neutral for non-equity instruments
     w_corr_adj = w_corr - w_cross  # reduce corr weight to make room
 
     regime_score = (

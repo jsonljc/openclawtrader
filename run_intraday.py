@@ -213,8 +213,9 @@ def run_intraday_cycle(
     now_utc = datetime.now(timezone.utc)
     _log(f"[INTRADAY] {run_id} cycle={cycle_count}")
 
-    # 1. Session
-    session_report = get_session_report(now_utc)
+    # 1. Session (use ES as primary session reference for the RTH gate;
+    #    per-instrument sessions checked in setup scanners)
+    session_report = get_session_report(now_utc, symbol="ES")
     session = session_report["session"]
     _log(f"  Session: {session} (modifier={session_report['modifier']}, "
          f"minutes_in={session_report['minutes_into_session']})")
@@ -393,60 +394,134 @@ def run_intraday_cycle(
 # Continuous loop
 # ---------------------------------------------------------------------------
 
+def _run_intraday_recon(run_id: str, paper: bool = True) -> None:
+    """
+    Fast 2-minute reconciliation: bracket triggers + MTM only.
+    No setup scanning or regime classification.
+    """
+    try:
+        snapshots = get_all_snapshots()
+    except Exception as exc:
+        _log(f"  [RECON] Data fetch failed: {exc}")
+        return
+
+    portfolio = store.load_portfolio()
+    positions = portfolio.get("positions", [])
+    if not positions:
+        return
+
+    if paper:
+        try:
+            closed = forge.process_bracket_triggers(snapshots, run_id, paper=True)
+            if closed:
+                _log(f"  [RECON] Brackets triggered: {len(closed)}")
+                for c in closed:
+                    _log(f"    -> CLOSED {c['position_id']} via {c['trigger']} PnL=${c['realized_pnl']:.2f}")
+                portfolio = store.load_portfolio()
+                positions = portfolio.get("positions", [])
+        except Exception as exc:
+            _log(f"  [RECON] Bracket error: {exc}")
+
+    # MTM update
+    for pos in positions:
+        sym = pos.get("symbol", "")
+        snap = snapshots.get(sym, {})
+        if not snap:
+            continue
+        price = snap.get("indicators", {}).get("last_price")
+        if price is None:
+            bars = snap.get("bars", {}).get("1H", [])
+            price = bars[-1]["c"] if bars else pos["entry_price"]
+        pos["current_price"] = price
+        side = pos.get("side", "LONG")
+        entry = pos.get("entry_price", price)
+        contracts = pos.get("contracts", 1)
+        pv = pos.get("point_value_usd", 50.0)
+        if side == "LONG":
+            unrealized = (price - entry) * pv * contracts
+        else:
+            unrealized = (entry - price) * pv * contracts
+        pos["unrealized_pnl_usd"] = round(unrealized, 2)
+
+    store.save_portfolio(portfolio)
+
+
 def run_intraday_loop(
     param_version: str = "PV_0001",
     paper: bool = True,
     force_signal: bool = False,
     cycle_interval_sec: int = 300,  # 5 minutes
+    recon_interval_sec: int = 120,  # 2 minutes
 ) -> None:
     """
-    Continuous 5-minute loop during RTH.
+    Continuous loop during RTH with two cadences:
+    - Full intraday cycle every 5 minutes (setup scanning + regime + sentinel + forge)
+    - Fast reconciliation every 2 minutes (bracket triggers + MTM only)
     Exits when RTH ends or on keyboard interrupt.
     """
     _log("[LOOP] Starting intraday loop")
     cycle_count = 0
+    last_full_cycle = 0.0
+    last_recon = 0.0
 
     while True:
         now_utc = datetime.now(timezone.utc)
+        now_ts = time.time()
 
         if not is_any_rth(now_utc):
             _log("[LOOP] Outside RTH (all instruments) — waiting...")
             time.sleep(60)
             continue
 
-        run_id = IDs.make_run_id()
-        ledger.append(C.EventType.SYSTEM_START, run_id, run_id, {
-            "mode": "intraday",
-            "param_version": param_version,
-            "paper": paper,
-            "cycle": cycle_count,
-        })
+        # Determine whether to run full cycle or recon
+        time_since_full = now_ts - last_full_cycle
+        time_since_recon = now_ts - last_recon
 
-        try:
-            result = run_intraday_cycle(
-                run_id=run_id,
-                param_version=param_version,
-                paper=paper,
-                force_signal=force_signal,
-                cycle_count=cycle_count,
-            )
-            _log(f"[LOOP] Cycle {cycle_count} result: {result.get('status')}")
-        except Exception as exc:
-            _log(f"[LOOP] Cycle {cycle_count} error: {exc}")
-            result = {"status": "ERROR", "reason": str(exc)}
+        if time_since_full >= cycle_interval_sec or last_full_cycle == 0:
+            # Full intraday cycle
+            run_id = IDs.make_run_id()
+            ledger.append(C.EventType.SYSTEM_START, run_id, run_id, {
+                "mode": "intraday",
+                "param_version": param_version,
+                "paper": paper,
+                "cycle": cycle_count,
+            })
 
-        ledger.append(C.EventType.SYSTEM_STOP, run_id, run_id, {
-            "mode": "intraday",
-            "cycle": cycle_count,
-            "result": result.get("status", "?"),
-        })
+            try:
+                result = run_intraday_cycle(
+                    run_id=run_id,
+                    param_version=param_version,
+                    paper=paper,
+                    force_signal=force_signal,
+                    cycle_count=cycle_count,
+                )
+                _log(f"[LOOP] Cycle {cycle_count} result: {result.get('status')}")
+            except Exception as exc:
+                _log(f"[LOOP] Cycle {cycle_count} error: {exc}")
+                result = {"status": "ERROR", "reason": str(exc)}
 
-        cycle_count += 1
+            ledger.append(C.EventType.SYSTEM_STOP, run_id, run_id, {
+                "mode": "intraday",
+                "cycle": cycle_count,
+                "result": result.get("status", "?"),
+            })
 
-        # Sleep until next cycle
-        elapsed = result.get("cycle_sec", 0)
-        sleep_time = max(1, cycle_interval_sec - elapsed)
-        _log(f"[LOOP] Sleeping {sleep_time:.0f}s until next cycle")
+            cycle_count += 1
+            last_full_cycle = time.time()
+            last_recon = last_full_cycle  # full cycle includes recon
+
+        elif time_since_recon >= recon_interval_sec:
+            # Fast 2-minute reconciliation only
+            run_id = IDs.make_run_id()
+            _log(f"[RECON] Running 2-min reconciliation")
+            _run_intraday_recon(run_id, paper=paper)
+            last_recon = time.time()
+
+        # Sleep until next action needed
+        next_full = last_full_cycle + cycle_interval_sec
+        next_recon = last_recon + recon_interval_sec
+        next_action = min(next_full, next_recon)
+        sleep_time = max(1, next_action - time.time())
         time.sleep(sleep_time)
 
 

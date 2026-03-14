@@ -30,6 +30,7 @@ from shared.contract_calendar import next_contract_month
 from regime import compute_regime as _compute_regime
 from health import evaluate_strategy_health
 from shared.utils import round_to_tick
+from shared.event_calendar import check_event_suppression
 
 
 # ---------------------------------------------------------------------------
@@ -39,11 +40,13 @@ from shared.utils import round_to_tick
 def _compute_regime_for_snapshot(
     snapshot: dict, portfolio: dict, param_version: str, run_id: str,
     all_snapshots: dict | None = None,
+    symbol: str = "ES",
 ) -> dict:
     """Delegate to regime.py for full sigmoid-weighted scoring."""
     return _compute_regime(
         snapshot, portfolio, param_version, run_id, snapshot.get("asof"),
         all_snapshots=all_snapshots,
+        symbol=symbol,
     )
 
 
@@ -107,6 +110,14 @@ def _check_gates(
         failures.append(f"Gate 5: session={session} — no new entries")
 
     # Gate 6: (Removed — rollover is handled before gate check)
+
+    # Gate 6.5: Pre-event suppression (macro calendar blackout)
+    event_check = check_event_suppression(symbol=symbol)
+    if event_check["suppressed"]:
+        failures.append(
+            f"Gate 6.5: event blackout — {event_check['event_name']} "
+            f"(tier {event_check['tier']}, {event_check['minutes_to_event']:.0f}min to event)"
+        )
 
     # Gate 7: Watchtower not HALT
     if wt_status == C.WatchtowerStatus.HALT:
@@ -376,6 +387,52 @@ def _build_roll_intent(
 
 
 # ---------------------------------------------------------------------------
+# Roll decision tree — spec 6.10
+# ---------------------------------------------------------------------------
+
+def _roll_decision_tree(
+    position: dict,
+    regime: dict,
+    snapshot: dict,
+) -> str:
+    """
+    Decide whether to ROLL, CLOSE, or HOLD a position near expiry.
+
+    Decision tree:
+    - Profitable position → ROLL (carry the trade forward)
+    - Loss > 50% of risk at stop → CLOSE (cut the loser)
+    - Small loss + favorable regime → ROLL
+    - Small loss + unfavorable regime → CLOSE
+    """
+    entry_price = position.get("entry_price", 0.0)
+    current_price = position.get("current_price", entry_price)
+    side = position.get("side", "LONG")
+    risk_at_stop = position.get("risk_at_stop_usd", 0.0)
+    point_value = position.get("point_value_usd", 50.0)
+    contracts = position.get("contracts", 1)
+
+    if side == "LONG":
+        unrealized = (current_price - entry_price) * point_value * contracts
+    else:
+        unrealized = (entry_price - current_price) * point_value * contracts
+
+    # Profitable → always roll
+    if unrealized >= 0:
+        return "ROLL"
+
+    # Loss > 50% of risk budget → close
+    if risk_at_stop > 0 and abs(unrealized) > 0.5 * risk_at_stop:
+        return "CLOSE"
+
+    # Small loss: check regime
+    regime_score = regime.get("effective_regime_score", 0.5)
+    if regime_score >= 0.45:
+        return "ROLL"
+
+    return "CLOSE"
+
+
+# ---------------------------------------------------------------------------
 # Signal dispatch table
 # ---------------------------------------------------------------------------
 
@@ -422,9 +479,10 @@ def run_brain(
         if snap is None:
             continue
 
-        # Compute regime and health reports
+        # Compute regime and health reports (per-instrument vol scoring)
         regime = _compute_regime_for_snapshot(snap, portfolio, param_version, run_id,
-                                              all_snapshots=snapshots)
+                                              all_snapshots=snapshots,
+                                              symbol=symbol)
         health = _evaluate_strategy_health(strategy, param_version)
         if regime_report is None:
             regime_report = regime
@@ -441,10 +499,30 @@ def run_brain(
         if days_exp <= roll_win:
             for pos in portfolio.get("positions", []):
                 if pos.get("strategy_id") == strategy_id:
-                    roll = _build_roll_intent(strategy, pos, snap, run_id, param_version)
-                    ledger.append(C.EventType.INTENT_CREATED, run_id, roll["intent_id"], roll)
-                    intents.append(roll)
-            continue  # No new entries when rolling
+                    roll_decision = _roll_decision_tree(pos, regime, snap)
+                    if roll_decision == "ROLL":
+                        roll = _build_roll_intent(strategy, pos, snap, run_id, param_version)
+                        ledger.append(C.EventType.INTENT_CREATED, run_id, roll["intent_id"], roll)
+                        intents.append(roll)
+                    elif roll_decision == "CLOSE":
+                        # Close instead of rolling — emit EXIT intent
+                        exit_intent = {
+                            "intent_id": IDs.make_intent_id(),
+                            "run_id": run_id,
+                            "param_version": param_version,
+                            "strategy_id": strategy_id,
+                            "intent_type": C.IntentType.EXIT,
+                            "symbol": pos.get("symbol", symbol),
+                            "position_id": pos.get("position_id"),
+                            "side": "SELL" if pos.get("side") == "LONG" else "BUY",
+                            "reason": f"Roll decision: CLOSE — losing position near expiry",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "state": C.IntentState.PROPOSED,
+                        }
+                        ledger.append(C.EventType.INTENT_CREATED, run_id,
+                                      exit_intent["intent_id"], exit_intent)
+                        intents.append(exit_intent)
+            continue  # No new entries when rolling/closing
 
         # Gate check
         gates_ok, gate_failures = _check_gates(

@@ -119,6 +119,7 @@ def _default_portfolio() -> dict:
         "param_version": "PV_0001",
         "account": {
             "equity_usd":             _DEFAULT_EQUITY,
+            "opening_equity_usd":     _DEFAULT_EQUITY,
             "peak_equity_usd":        _DEFAULT_EQUITY,
             "cash_usd":               _DEFAULT_EQUITY,
             "margin_used_usd":        0.0,

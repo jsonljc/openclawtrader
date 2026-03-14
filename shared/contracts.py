@@ -45,6 +45,8 @@ class EventType:
     INTRADAY_SETUP_SCORED   = "INTRADAY_SETUP_SCORED"
     POSITION_PARTIALLY_CLOSED = "POSITION_PARTIALLY_CLOSED"
     TRAILING_STOP_UPDATED     = "TRAILING_STOP_UPDATED"
+    FILL_SLIPPAGE             = "FILL_SLIPPAGE"
+    DAILY_RESET               = "DAILY_RESET"
 
 
 # ---------------------------------------------------------------------------

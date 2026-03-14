@@ -57,8 +57,9 @@ def _check_session_gate(intent: dict, snapshot: dict) -> tuple[bool, str]:
     try:
         from session import detect_intra_session, minutes_into_session, IntraSession
         now_utc = datetime.now(timezone.utc)
-        session = detect_intra_session(now_utc)
-        mins_in = minutes_into_session(now_utc)
+        symbol = intent.get("symbol", "ES")
+        session = detect_intra_session(now_utc, symbol=symbol)
+        mins_in = minutes_into_session(now_utc, symbol=symbol)
 
         if session in IntraSession.SUPPRESSED:
             return False, f"Session gate: {session} — entries suppressed"
@@ -488,6 +489,21 @@ def _run_hard_checks(
         vel_ok, vel_reason = _check_loss_velocity()
         if not vel_ok:
             failed.append({"rule": "loss_velocity", "value": vel_reason, "limit": "", "unit": ""})
+
+    # Rule 19: Pre-event suppression (applies to all strategies)
+    try:
+        from shared.event_calendar import check_event_suppression
+        symbol = intent.get("symbol", "ES")
+        event_check = check_event_suppression(symbol=symbol)
+        if event_check["suppressed"]:
+            failed.append({
+                "rule": "event_suppression",
+                "value": f"{event_check['event_name']} (tier {event_check['tier']})",
+                "limit": f"{event_check['minutes_to_event']:.0f}min to event",
+                "unit": "",
+            })
+    except ImportError:
+        pass  # Event calendar not available — skip
 
     return passed, failed, warnings
 

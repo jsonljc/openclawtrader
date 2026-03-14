@@ -29,6 +29,7 @@ from shared import alerting
 from paper_broker import simulate_market_fill, check_bracket_triggers
 from fees_model import exit_fee_usd
 from slippage_model import estimate_slippage_ticks, slippage_usd
+from slippage_tracker import record_fill as _record_slippage_fill
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1130,21 @@ def execute_approval(
     })
     # Phase 4: slippage calibration
     store.update_exec_quality_slippage(intent.get("strategy_id", ""), fill["slippage_ticks"])
+
+    # Track slippage by contract type (micro vs full)
+    slip_result = _record_slippage_fill(
+        symbol=symbol,
+        strategy_id=intent.get("strategy_id", ""),
+        slippage_ticks=fill["slippage_ticks"],
+        slippage_usd=fill["slippage_usd"],
+        contracts=contracts_filled,
+        fill_price=fill_price,
+        side=side,
+        run_id=run_id,
+    )
+    if slip_result.get("alert"):
+        alerting.alert("WARNING", slip_result["alert_message"],
+                       {"micro_avg": slip_result["micro_avg"], "full_avg": slip_result["full_avg"]})
 
     # Build position dict for bracket placement
     position_template = {
