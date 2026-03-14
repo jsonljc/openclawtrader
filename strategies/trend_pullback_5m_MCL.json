@@ -24,8 +24,8 @@
   "correlation_group": "energy",
   "margin_per_contract_usd": 6600,
   "micro_margin_per_contract_usd": 660,
-  "contract_month": "CLN26",
-  "contract_expiry": "2026-07-20",
+  "contract_month": "CLK26",
+  "contract_expiry": "2026-05-19",
   "incubation": {
     "is_incubating": true,
     "incubation_size_pct": 25,

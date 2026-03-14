@@ -4,6 +4,7 @@
   "symbol": "NQ",
   "micro_symbol": "MNQ",
   "use_micro": true,
+  "contract_month": "NQM26",
   "timeframe": "5m",
   "status": "ACTIVE",
   "signal": {

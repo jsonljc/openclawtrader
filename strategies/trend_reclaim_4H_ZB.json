@@ -4,7 +4,7 @@
   "symbol": "ZB",
   "timeframe": "4H",
   "contract_type": "FUTURE",
-  "contract_month": "ZBU26",
+  "contract_month": "ZBM26",
   "tick_size": 0.03125,
   "tick_value_usd": 31.25,
   "point_value_usd": 1000.00,
@@ -31,7 +31,7 @@
   "min_trades_for_full_health": 10,
   "max_hold_bars": 20,
 
-  "contract_expiry": "2026-09-21",
+  "contract_expiry": "2026-06-19",
   "roll_days_before_expiry": 5,
   "session_schedule": {
     "core":       {"start": "08:20", "end": "15:00", "tz": "America/New_York"},

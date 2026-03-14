@@ -4,6 +4,7 @@
   "symbol": "ES",
   "micro_symbol": "MES",
   "use_micro": true,
+  "contract_month": "ESM26",
   "timeframe": "5m",
   "status": "ACTIVE",
   "signal": {

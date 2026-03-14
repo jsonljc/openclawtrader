@@ -4,7 +4,7 @@
   "symbol": "GC",
   "timeframe": "5m",
   "contract_type": "FUTURE",
-  "contract_month": "GCQ26",
+  "contract_month": "GCM26",
   "tick_size": 0.10,
   "tick_value_usd": 1.00,
   "point_value_usd": 10.00,
@@ -31,7 +31,7 @@
   "min_trades_for_full_health": 20,
   "max_hold_bars": 18,
 
-  "contract_expiry": "2026-08-27",
+  "contract_expiry": "2026-06-26",
   "roll_days_before_expiry": 5,
   "session_schedule": {
     "core":       {"start": "08:20", "end": "13:30", "tz": "America/New_York"},

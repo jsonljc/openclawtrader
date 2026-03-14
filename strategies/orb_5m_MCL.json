@@ -4,7 +4,7 @@
   "symbol": "CL",
   "timeframe": "5m",
   "contract_type": "FUTURE",
-  "contract_month": "CLN26",
+  "contract_month": "CLK26",
   "tick_size": 0.01,
   "tick_value_usd": 1.00,
   "point_value_usd": 100.00,
@@ -31,7 +31,7 @@
   "min_trades_for_full_health": 20,
   "max_hold_bars": 18,
 
-  "contract_expiry": "2026-07-20",
+  "contract_expiry": "2026-05-19",
   "roll_days_before_expiry": 5,
   "session_schedule": {
     "core":       {"start": "09:00", "end": "14:30", "tz": "America/New_York"},

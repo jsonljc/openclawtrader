@@ -24,8 +24,8 @@
   "correlation_group": "metals",
   "margin_per_contract_usd": 11000,
   "micro_margin_per_contract_usd": 1100,
-  "contract_month": "GCQ26",
-  "contract_expiry": "2026-08-27",
+  "contract_month": "GCM26",
+  "contract_expiry": "2026-06-26",
   "incubation": {
     "is_incubating": true,
     "incubation_size_pct": 25,
