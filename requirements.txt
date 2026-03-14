@@ -1,0 +1,11 @@
+# OpenClaw Trader — Python dependencies
+# Install: pip install -r requirements.txt
+
+# IB Gateway connectivity
+ib_insync>=0.9.86
+
+# Testing
+pytest>=7.0
+
+# Timezone support (stdlib zoneinfo backport for <3.9)
+# tzdata  # uncomment if tzdata not bundled with OS

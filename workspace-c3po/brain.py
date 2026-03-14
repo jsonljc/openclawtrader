@@ -365,6 +365,17 @@ def _build_roll_intent(
     cur_month  = position.get("contract_month", strategy.get("contract_month", ""))
     next_month = next_contract_month(sym, cur_month)
 
+    # Estimate roll spread cost from slippage model (2x entry slippage for close+open)
+    tick_size = strategy.get("tick_size", 0.25)
+    contracts = position.get("contracts", 1)
+    use_micro = strategy.get("micro_available", False) and sym in ("ES", "NQ", "CL", "GC")
+    pv = (strategy.get("micro_point_value_usd", 5.0) if use_micro
+          else strategy.get("point_value_usd", 50.0))
+    est_slip_ticks = snapshot.get("microstructure", {}).get("spread_ticks", 1) * 2
+    est_spread_usd = round(est_slip_ticks * tick_size * pv * contracts, 2)
+    fee_rt = strategy.get("fee_per_contract_round_trip_usd", 4.62)
+    est_total = round(est_spread_usd + fee_rt * contracts * 2, 2)
+
     return {
         "intent_id":     intent_id,
         "run_id":        run_id,
@@ -380,8 +391,8 @@ def _build_roll_intent(
         "entry_price":   position.get("entry_price"),
         "stop_price":    position.get("stop_price"),
         "take_profit_price": position.get("take_profit_price"),
-        "estimated_calendar_spread_usd": None,
-        "estimated_roll_cost_total_usd": None,
+        "estimated_calendar_spread_usd": est_spread_usd,
+        "estimated_roll_cost_total_usd": est_total,
         "reason":        f"{strategy.get('roll_days_before_expiry', 5)} days to expiry; standard roll window",
         "created_at":    datetime.now(timezone.utc).isoformat(),
         "state":         C.IntentState.PROPOSED,

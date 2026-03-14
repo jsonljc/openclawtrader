@@ -924,6 +924,21 @@ def _execute_approval_ib(
     })
     store.update_exec_quality_slippage(intent.get("strategy_id", ""), fill["slippage_ticks"])
 
+    # Track slippage by contract type (micro vs full) — IB path
+    slip_result = _record_slippage_fill(
+        symbol=ib_symbol,
+        strategy_id=intent.get("strategy_id", ""),
+        slippage_ticks=fill["slippage_ticks"],
+        slippage_usd=fill["slippage_usd"],
+        contracts=contracts_filled,
+        fill_price=fill_price,
+        side=side,
+        run_id=run_id,
+    )
+    if slip_result.get("alert"):
+        alerting.alert("WARNING", slip_result["alert_message"],
+                       {"micro_avg": slip_result["micro_avg"], "full_avg": slip_result["full_avg"]})
+
     # STEP 7: Place bracket orders via IB
     stop_price = intent.get("stop_plan", {}).get("price", fill_price - 50)
     tp_price = intent.get("take_profit_plan", {}).get("price", fill_price + 50)
