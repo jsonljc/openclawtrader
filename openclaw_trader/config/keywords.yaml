@@ -1,0 +1,86 @@
+# Layer 1: relevance filter. Item must contain at least one keyword.
+layer_1:
+  - fed
+  - federal reserve
+  - fomc
+  - powell
+  - warsh
+  - fed chair
+  - rate
+  - inflation
+  - cpi
+  - gdp
+  - jobs
+  - payroll
+  - unemployment
+  - recession
+  - tariff
+  - sanction
+  - war
+  - attack
+  - invasion
+  - missile
+  - explosion
+  - oil
+  - crude
+  - opec
+  - gold
+  - treasury
+  - yield
+  - bond
+  - circuit breaker
+  - halt
+  - default
+  - bankruptcy
+  - bank failure
+  - fdic
+  - china
+  - russia
+  - iran
+  - ukraine
+  - israel
+  - taiwan
+  - trump
+  - white house
+  - executive order
+  - emergency
+  - eia
+  - petroleum
+  - inventory
+  - north korea
+  - nuclear
+
+# Layer 2: immediate action triggers (applied before LLM).
+layer_2_halt:
+  - circuit breaker activated
+  - trading halted
+  - exchange closed
+  - emergency fed meeting
+  - unscheduled fomc
+  - emergency rate
+  - nuclear launch
+  - nuclear strike
+  - market closed
+  - bank run
+  - fdic receivership
+  - debt ceiling default
+  - invasion began
+  - war declared
+  - coup successful
+
+layer_2_caution:
+  - tariff
+  - opec cut
+  - oil field attack
+  - strait of hormuz
+  - bank failure
+  - going concern
+  - chapter 11
+
+# Sources where Layer 2 caution "tariff" applies
+layer_2_caution_tariff_sources:
+  - TRUMP_TRUTH_SOCIAL
+  - TRUMP_TWITTER
+  - WHITE_HOUSE_OFFICIAL
+  - WHITE_HOUSE_PRESS_SEC
+  - USTR_PRESS
