@@ -1,0 +1,29 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  signal-daemon:
+    build: .
+    command: python -m openclaw_trader.signals.signal_daemon
+    depends_on:
+      - redis
+    env_file: .env
+    restart: unless-stopped
+
+  trading:
+    build: .
+    command: python run_intraday.py --mode loop
+    depends_on:
+      - redis
+    env_file: .env
+    restart: unless-stopped
+    profiles:
+      - full
+
+volumes:
+  redis_data:
