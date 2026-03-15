@@ -630,6 +630,28 @@ def evaluate_intent(
     sp      = params.get("sentinel", {})
     sizing  = params.get("sizing", {})
 
+    # --- External signals (news/Polymarket) — runs before all rules ---
+    _signal_mod = 1.0
+    _signal_stop_mod = 1.0
+    try:
+        import redis as _redis_mod
+        _r = _redis_mod.from_url(
+            __import__("os").environ.get("REDIS_URL", "redis://localhost:6379"),
+            decode_responses=True,
+        )
+        from openclaw_trader.signals.sentinel_bridge import check_external_signals
+        _ext = check_external_signals(intent.get("symbol", "ES"), redis_client=_r)
+        if _ext["halt"] and intent.get("intent_type") == C.IntentType.ENTRY:
+            approval_id = IDs.make_approval_id()
+            reason = f"External signal HALT: {[s.get('headline', s.get('type', '')) for s in _ext['active_signals'][:3]]}"
+            deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
+            ledger.append(C.EventType.INTENT_DENIED, run_id, intent.get("intent_id", ""), deny)
+            return deny
+        _signal_mod = _ext.get("sizing_modifier", 1.0)
+        _signal_stop_mod = _ext.get("stop_modifier", 1.0)
+    except Exception:
+        pass  # Redis/signals unavailable — continue with normal rules
+
     intent_id   = intent.get("intent_id", IDs.make_intent_id())
     intent_type = intent.get("intent_type", C.IntentType.ENTRY)
     strategy_id = intent.get("strategy_id", "")
@@ -779,6 +801,7 @@ def evaluate_intent(
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
     final_risk_usd = base_risk_usd * health_mod * posture_mod * session_mod * streak_mod * vol_scalar * incub_mod
+    final_risk_usd *= _signal_mod
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)
