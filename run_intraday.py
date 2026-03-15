@@ -86,6 +86,7 @@ def _scan_setups(
     from setups.orb import detect as detect_orb
     from setups.vwap_reclaim import detect as detect_vwap
     from setups.trend_pullback import detect as detect_trend_pullback
+    from setups.news_directional import detect as detect_news
 
     intents: list[dict] = []
     registry = store.load_strategy_registry()
@@ -125,6 +126,26 @@ def _scan_setups(
             candidate = detect_vwap(**detect_kwargs)
         elif setup_family == "TREND_PULLBACK":
             candidate = detect_trend_pullback(**detect_kwargs)
+        elif setup_family == "NEWS_DIRECTIONAL":
+            _news_signals = []
+            try:
+                import redis as _rmod
+                _rc = _rmod.from_url(
+                    __import__("os").environ.get("REDIS_URL", "redis://localhost:6379"),
+                    decode_responses=True,
+                )
+                from openclaw_trader.signals.signal_publisher import read_active_signals
+                raw = read_active_signals(_rc, "news_signals", count=50)
+                _news_signals = [
+                    s for s in raw
+                    if symbol in s.get("instruments", [])
+                    and s.get("tier", "").startswith("DIRECTIONAL")
+                ]
+            except Exception:
+                pass
+            detect_kwargs["signals"] = _news_signals
+            detect_kwargs["traded_signal_ids"] = set()
+            candidate = detect_news(**detect_kwargs)
 
         if candidate is None:
             continue
