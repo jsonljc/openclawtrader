@@ -1,0 +1,165 @@
+# Each event maps to per-instrument responses.
+# action: HALT | REDUCE | DIRECTIONAL_LONG | DIRECTIONAL_SHORT | CAUTION | MONITOR | IGNORE
+# confirm_bars: number of 5-min bars to wait before DIRECTIONAL entry
+# human_required: if true, human must approve before any DIRECTIONAL trade
+
+FED_RATE_CUT_SURPRISE:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  CL: { action: REDUCE }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+
+FED_RATE_HIKE_SURPRISE:
+  ES: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: REDUCE }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+  ZB: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+
+NFP_STRONG_BEAT:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+  ZB: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+
+NFP_STRONG_MISS:
+  ES: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+
+CPI_HOT:
+  ES: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: CAUTION }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+
+CPI_COOL:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  CL: { action: CAUTION }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+
+TRUMP_NEW_TARIFF:
+  ES: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: CAUTION }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+
+TRUMP_TARIFF_ROLLBACK:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  ZB: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+
+TRUMP_FED_ATTACK:
+  ES: { action: REDUCE }
+  NQ: { action: REDUCE }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: CAUTION }
+
+TRUMP_ENERGY_DRILL:
+  ES: { action: MONITOR }
+  NQ: { action: IGNORE }
+  CL: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  GC: { action: IGNORE }
+  ZB: { action: IGNORE }
+
+TRUMP_CHINA_HOSTILE:
+  ES: { action: REDUCE }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: CAUTION }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: CAUTION }
+
+TRUMP_TRADE_DEAL_POSITIVE:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  ZB: { action: IGNORE }
+
+MIDDLE_EAST_ESCALATION:
+  ES: { action: HALT }
+  NQ: { action: HALT }
+  CL: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+
+MIDDLE_EAST_CEASEFIRE:
+  ES: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  NQ: { action: DIRECTIONAL_LONG, confirm_bars: 2 }
+  CL: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+  GC: { action: DIRECTIONAL_SHORT, confirm_bars: 2 }
+  ZB: { action: IGNORE }
+
+OPEC_PRODUCTION_CUT:
+  ES: { action: IGNORE }
+  NQ: { action: IGNORE }
+  CL: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  GC: { action: IGNORE }
+  ZB: { action: IGNORE }
+
+OPEC_PRODUCTION_INCREASE:
+  ES: { action: IGNORE }
+  NQ: { action: IGNORE }
+  CL: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  GC: { action: IGNORE }
+  ZB: { action: IGNORE }
+
+BANK_FAILURE_SMALL:
+  ES: { action: REDUCE }
+  NQ: { action: REDUCE }
+  CL: { action: IGNORE }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+
+BANK_FAILURE_MAJOR:
+  ES: { action: HALT, human_required: true }
+  NQ: { action: HALT, human_required: true }
+  CL: { action: HALT }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 2, human_required: true }
+  ZB: { action: DIRECTIONAL_LONG, confirm_bars: 2, human_required: true }
+
+CHINA_EXPORT_CONTROLS_NQ:
+  ES: { action: REDUCE }
+  NQ: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  CL: { action: CAUTION }
+  GC: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  ZB: { action: CAUTION }
+
+EIA_INVENTORY_BULLISH_SURPRISE:
+  ES: { action: IGNORE }
+  NQ: { action: IGNORE }
+  CL: { action: DIRECTIONAL_LONG, confirm_bars: 1 }
+  GC: { action: IGNORE }
+  ZB: { action: IGNORE }
+
+EIA_INVENTORY_BEARISH_SURPRISE:
+  ES: { action: IGNORE }
+  NQ: { action: IGNORE }
+  CL: { action: DIRECTIONAL_SHORT, confirm_bars: 1 }
+  GC: { action: IGNORE }
+  ZB: { action: IGNORE }
+
+NUCLEAR_ANY_REFERENCE:
+  ES: { action: HALT, human_required: true }
+  NQ: { action: HALT, human_required: true }
+  CL: { action: HALT, human_required: true }
+  GC: { action: HALT, human_required: true }
+  ZB: { action: HALT, human_required: true }
+
+CIRCUIT_BREAKER_ACTIVATED:
+  ES: { action: HALT, human_required: true }
+  NQ: { action: HALT, human_required: true }
+  CL: { action: HALT, human_required: true }
+  GC: { action: HALT, human_required: true }
+  ZB: { action: HALT, human_required: true }
