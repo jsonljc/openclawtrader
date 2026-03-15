@@ -1,0 +1,42 @@
+sources:
+  - source_id: FED_PRESS_RELEASES
+    url: "https://www.federalreserve.gov/feeds/press_all.xml"
+    type: rss
+    poll_interval_seconds: 30
+    priority: CRITICAL
+
+  - source_id: FED_SPEECHES
+    url: "https://www.federalreserve.gov/feeds/speeches.xml"
+    type: rss
+    poll_interval_seconds: 60
+    priority: HIGH
+
+  - source_id: REUTERS_WORLD
+    url: "https://feeds.reuters.com/Reuters/worldNews"
+    type: rss
+    poll_interval_seconds: 30
+    priority: CRITICAL
+
+  - source_id: AP_BREAKING
+    url: "https://apnews.com/rss"
+    type: rss
+    poll_interval_seconds: 30
+    priority: CRITICAL
+
+  - source_id: TRUMP_TRUTH_SOCIAL
+    url: "https://truthsocial.com/@realDonaldTrump.rss"
+    type: rss
+    poll_interval_seconds: 15
+    priority: CRITICAL
+
+  - source_id: WHITE_HOUSE_OFFICIAL
+    url: "https://www.whitehouse.gov/feed/"
+    type: rss
+    poll_interval_seconds: 60
+    priority: HIGH
+
+  - source_id: EIA_PETROLEUM
+    url: "https://www.eia.gov/petroleum/supply/weekly/"
+    type: rss
+    poll_interval_seconds: 60
+    priority: CRITICAL
