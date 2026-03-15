@@ -9,3 +9,13 @@ pytest>=7.0
 
 # Timezone support (stdlib zoneinfo backport for <3.9)
 # tzdata  # uncomment if tzdata not bundled with OS
+
+# Signal registry
+feedparser>=6.0
+redis>=5.0
+anthropic>=0.40
+aiohttp>=3.9
+beautifulsoup4>=4.12
+
+# Testing
+fakeredis>=2.21

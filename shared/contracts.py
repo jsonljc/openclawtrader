@@ -47,6 +47,8 @@ class EventType:
     TRAILING_STOP_UPDATED     = "TRAILING_STOP_UPDATED"
     FILL_SLIPPAGE             = "FILL_SLIPPAGE"
     DAILY_RESET               = "DAILY_RESET"
+    NEWS_SIGNAL               = "NEWS_SIGNAL"
+    POLYMARKET_SIGNAL         = "POLYMARKET_SIGNAL"
 
 
 # ---------------------------------------------------------------------------
