@@ -11,6 +11,7 @@ Public API:
 
 from __future__ import annotations
 import math
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,15 @@ from shared import contracts as C
 from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
+
+# Optional: Redis + signal bridge for external signal integration.
+# Gracefully absent when redis package is not installed.
+try:
+    import redis as _redis_mod
+    from openclaw_trader.signals.sentinel_bridge import check_external_signals as _check_external_signals
+    _HAS_SIGNALS = True
+except ImportError:
+    _HAS_SIGNALS = False
 
 # ---------------------------------------------------------------------------
 # Strategy pre-flight validation
@@ -634,13 +644,13 @@ def evaluate_intent(
     _signal_mod = 1.0
     _signal_stop_mod = 1.0
     try:
-        import redis as _redis_mod
+        if not _HAS_SIGNALS:
+            raise ImportError("redis/signal bridge not available")
         _r = _redis_mod.from_url(
-            __import__("os").environ.get("REDIS_URL", "redis://localhost:6379"),
+            os.environ.get("REDIS_URL", "redis://localhost:6379"),
             decode_responses=True,
         )
-        from openclaw_trader.signals.sentinel_bridge import check_external_signals
-        _ext = check_external_signals(intent.get("symbol", "ES"), redis_client=_r)
+        _ext = _check_external_signals(intent.get("symbol", "ES"), redis_client=_r)
         if _ext["halt"] and intent.get("intent_type") == C.IntentType.ENTRY:
             approval_id = IDs.make_approval_id()
             reason = f"External signal HALT: {[s.get('headline', s.get('type', '')) for s in _ext['active_signals'][:3]]}"

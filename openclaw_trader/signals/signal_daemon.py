@@ -88,7 +88,10 @@ async def _run_rss_collector(
                     if alert_text:
                         telegram_alerter.send_message(alert_text)
 
-                if anthropic_client and not l2_action:
+                # Run LLM even after Layer 2 fires — Layer 2 publishes the
+                # immediate action (HALT/CAUTION) while LLM provides a richer
+                # classification that may upgrade to a DIRECTIONAL signal.
+                if anthropic_client:
                     result = classify_headline(headline, summary, source_id, anthropic_client)
                     tier = result.get("tier", "MONITOR")
                     if tier != "IGNORE":
@@ -170,6 +173,7 @@ async def main():
     redis_client.ping()
     logger.info(f"Redis connected: {REDIS_URL}")
 
+    telegram_alerter.init_redis(redis_client)
     keywords = load_keywords()
     matrix = ResponseMatrix()
     dedup = Deduplicator(redis_client)

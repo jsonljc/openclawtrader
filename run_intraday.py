@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -42,6 +43,14 @@ from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 from shared.correlation import update_portfolio_heat_correlations
+
+# Optional: Redis for reading news signals (NEWS_DIRECTIONAL scanner).
+try:
+    import redis as _redis_mod
+    from openclaw_trader.signals.signal_publisher import read_active_signals as _read_active_signals
+    _HAS_REDIS = True
+except ImportError:
+    _HAS_REDIS = False
 
 import sentinel
 import forge
@@ -134,21 +143,20 @@ def _scan_setups(
             candidate = detect_trend_pullback(**detect_kwargs)
         elif setup_family == "NEWS_DIRECTIONAL":
             _news_signals = []
-            try:
-                import redis as _rmod
-                _rc = _rmod.from_url(
-                    __import__("os").environ.get("REDIS_URL", "redis://localhost:6379"),
-                    decode_responses=True,
-                )
-                from openclaw_trader.signals.signal_publisher import read_active_signals
-                raw = read_active_signals(_rc, "news_signals", count=50)
-                _news_signals = [
-                    s for s in raw
-                    if symbol in s.get("instruments", [])
-                    and s.get("tier", "").startswith("DIRECTIONAL")
-                ]
-            except Exception:
-                pass
+            if _HAS_REDIS:
+                try:
+                    _rc = _redis_mod.from_url(
+                        os.environ.get("REDIS_URL", "redis://localhost:6379"),
+                        decode_responses=True,
+                    )
+                    raw = _read_active_signals(_rc, "news_signals", count=50)
+                    _news_signals = [
+                        s for s in raw
+                        if symbol in s.get("instruments", [])
+                        and s.get("tier", "").startswith("DIRECTIONAL")
+                    ]
+                except Exception:
+                    pass
             detect_kwargs["signals"] = _news_signals
             global _traded_signal_ids, _traded_signal_date
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

@@ -11,10 +11,30 @@ from typing import Any
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 MAX_MESSAGES_PER_HOUR = 20
+_RATE_LIMIT_KEY = "openclaw:telegram_rate"
+
+# In-memory fallback when Redis is unavailable.
 _SEND_LOG: list[float] = []
+
+# Optional Redis client set by init_redis() for persistent rate limiting.
+_redis_client = None
+
+
+def init_redis(redis_client) -> None:
+    """Set a Redis client for persistent rate limiting across restarts."""
+    global _redis_client
+    _redis_client = redis_client
 
 
 def _rate_ok() -> bool:
+    if _redis_client:
+        try:
+            count = _redis_client.incr(_RATE_LIMIT_KEY)
+            if count == 1:
+                _redis_client.expire(_RATE_LIMIT_KEY, 3600)
+            return count <= MAX_MESSAGES_PER_HOUR
+        except Exception:
+            pass  # Fall through to in-memory
     now = time.time()
     cutoff = now - 3600
     _SEND_LOG[:] = [t for t in _SEND_LOG if t > cutoff]
