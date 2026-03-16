@@ -1,18 +1,33 @@
 """Layer 1 (relevance) and Layer 2 (immediate action) keyword filtering."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
 
 _CONFIG_DIR = Path(__file__).parent.parent / "config"
 
+# Short keywords (<=5 chars) that need word-boundary matching to avoid
+# false positives like "federated" matching "fed" or "reward" matching "war".
+_SHORT_KEYWORD_THRESHOLD = 5
+
 
 def load_keywords(path: Path | None = None) -> dict:
     """Load keyword config from YAML."""
     p = path or (_CONFIG_DIR / "keywords.yaml")
     with open(p) as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    # Pre-compile word-boundary regexes for short Layer 1 keywords
+    compiled = []
+    for kw in data.get("layer_1", []):
+        kw_lower = kw.lower()
+        if len(kw_lower) <= _SHORT_KEYWORD_THRESHOLD:
+            compiled.append(re.compile(r"\b" + re.escape(kw_lower) + r"\b"))
+        else:
+            compiled.append(kw_lower)
+    data["_layer_1_compiled"] = compiled
+    return data
 
 
 def layer_1_filter(
@@ -24,6 +39,17 @@ def layer_1_filter(
     text = (headline + " " + summary).lower()
     if not text.strip():
         return False
+    compiled = keywords.get("_layer_1_compiled")
+    if compiled:
+        for matcher in compiled:
+            if isinstance(matcher, re.Pattern):
+                if matcher.search(text):
+                    return True
+            else:
+                if matcher in text:
+                    return True
+        return False
+    # Fallback if keywords loaded without compilation
     for kw in keywords.get("layer_1", []):
         if kw.lower() in text:
             return True

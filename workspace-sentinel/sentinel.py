@@ -647,6 +647,12 @@ def evaluate_intent(
             deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
             ledger.append(C.EventType.INTENT_DENIED, run_id, intent.get("intent_id", ""), deny)
             return deny
+        if _ext.get("human_required") and intent.get("intent_type") == C.IntentType.ENTRY:
+            approval_id = IDs.make_approval_id()
+            reason = f"Human approval required for event: {[s.get('event_type', '') for s in _ext['active_signals'] if s.get('event_type')][:3]}"
+            deny = _deny(intent, approval_id, run_id, reason, sp, posture=posture)
+            ledger.append(C.EventType.INTENT_DENIED, run_id, intent.get("intent_id", ""), deny)
+            return deny
         _signal_mod = _ext.get("sizing_modifier", 1.0)
         _signal_stop_mod = _ext.get("stop_modifier", 1.0)
     except Exception:

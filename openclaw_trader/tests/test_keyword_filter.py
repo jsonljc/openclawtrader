@@ -25,7 +25,12 @@ class TestLayer1:
         assert layer_1_filter("FOMC DECIDES ON RATES", keywords) is True
 
     def test_partial_word_no_false_positive(self, keywords):
-        assert layer_1_filter("Federation of bakers meets", keywords) is True
+        # "Federation" should NOT match "fed" — word boundary prevents it
+        assert layer_1_filter("Federation of bakers meets", keywords) is False
+
+    def test_short_keyword_standalone_matches(self, keywords):
+        # "fed" as a standalone word should still match
+        assert layer_1_filter("The fed announces new policy", keywords) is True
 
     def test_empty_headline_discarded(self, keywords):
         assert layer_1_filter("", keywords) is False

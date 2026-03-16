@@ -10,8 +10,9 @@ from pathlib import Path
 import redis
 import yaml
 
-_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_ROOT))
+_ROOT = str(Path(__file__).parent.parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from openclaw_trader.signals.rss_collector import RSSCollector
 from openclaw_trader.signals.polymarket_collector import PolymarketCollector

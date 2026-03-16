@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from redis import Redis
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+_ROOT = str(Path(__file__).parent.parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 from shared import contracts as C
 from shared import ledger
 
@@ -87,7 +90,7 @@ def publish_polymarket_signal(
         "value_usd": str(value_usd) if value_usd is not None else "",
         "drift_magnitude": str(drift_magnitude) if drift_magnitude is not None else "",
         "timestamp": now.isoformat(),
-        "expires_at": now.isoformat(),
+        "expires_at": (now + timedelta(minutes=duration_minutes)).isoformat(),
         "duration_minutes": str(duration_minutes),
     }
     entry_id = redis_client.xadd(POLYMARKET_STREAM, fields, maxlen=500)
