@@ -62,6 +62,12 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Track signal IDs already traded to enforce one-trade-per-event (Section 16).
+# Resets daily when the date changes.
+_traded_signal_ids: set[str] = set()
+_traded_signal_date: str = ""
+
+
 def _log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
 
@@ -144,11 +150,20 @@ def _scan_setups(
             except Exception:
                 pass
             detect_kwargs["signals"] = _news_signals
-            detect_kwargs["traded_signal_ids"] = set()
+            global _traded_signal_ids, _traded_signal_date
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if _traded_signal_date != today:
+                _traded_signal_ids = set()
+                _traded_signal_date = today
+            detect_kwargs["traded_signal_ids"] = _traded_signal_ids
             candidate = detect_news(**detect_kwargs)
 
         if candidate is None:
             continue
+
+        # Record traded signal ID for one-trade-per-event dedup
+        if setup_family == "NEWS_DIRECTIONAL" and candidate.get("signal_id"):
+            _traded_signal_ids.add(candidate["signal_id"])
 
         # Score the opportunity
         score = score_opportunity(

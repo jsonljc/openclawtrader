@@ -811,6 +811,16 @@ def evaluate_intent(
     entry_price = intent_entry_price if intent_entry_price else bar_close_fallback
     stop_dist   = abs(entry_price - stop_price)
 
+    # Apply external signal stop modifier (e.g. CAUTION → 1.25x wider stop)
+    if _signal_stop_mod != 1.0 and stop_dist > 0:
+        stop_dist *= _signal_stop_mod
+        side = intent.get("side", "LONG")
+        if side == "LONG":
+            stop_price = entry_price - stop_dist
+        else:
+            stop_price = entry_price + stop_dist
+        intent["stop_plan"] = {"price": stop_price}
+
     if stop_dist <= 0:
         deny = _deny(intent, approval_id, run_id, "Stop distance is zero", sp, posture=posture)
         ledger.append(C.EventType.INTENT_DENIED, run_id, intent_id, deny)

@@ -91,9 +91,26 @@ async def _run_rss_collector(
                     result = classify_headline(headline, summary, source_id, anthropic_client)
                     tier = result.get("tier", "MONITOR")
                     if tier != "IGNORE":
-                        instruments = result.get("instruments", ["ES", "NQ", "CL", "GC", "ZB"])
-                        direction = result.get("direction")
                         event_type = result.get("topic", result.get("conflict_type", ""))
+                        llm_direction = result.get("direction")
+
+                        # Map through ResponseMatrix for per-instrument actions
+                        responses = matrix.get_all(event_type) if event_type else {}
+                        if responses:
+                            instruments = []
+                            direction = llm_direction
+                            for sym, resp in responses.items():
+                                action = resp.get("action", "MONITOR")
+                                if action in ("LONG", "SHORT", "HALT", "REDUCE"):
+                                    instruments.append(sym)
+                                    if action in ("LONG", "SHORT") and not direction:
+                                        direction = action
+                            if not instruments:
+                                instruments = result.get("instruments", ["ES", "NQ", "CL", "GC", "ZB"])
+                        else:
+                            instruments = result.get("instruments", ["ES", "NQ", "CL", "GC", "ZB"])
+                            direction = llm_direction
+
                         publish_news_signal(
                             redis_client, source_id, headline, summary,
                             tier=tier, direction=direction,
