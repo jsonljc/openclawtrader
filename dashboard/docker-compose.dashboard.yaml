@@ -1,0 +1,28 @@
+# Usage: docker-compose -f docker-compose.yaml -f dashboard/docker-compose.dashboard.yaml up
+services:
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: dashboard/api/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/app/data:ro
+    environment:
+      - OPENCLAW_DATA=/app/data
+      - OPENCLAW_STRATEGIES=/app/strategies
+      - OPENCLAW_PARAMS=/app/params
+      - REDIS_URL=redis://redis:6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    depends_on:
+      - redis
+
+  dashboard-ui:
+    build:
+      context: dashboard/ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - dashboard-api
