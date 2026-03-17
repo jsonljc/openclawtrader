@@ -823,5 +823,75 @@ class TestRunBrain:
         assert intents[0]["intent_type"] == C.IntentType.EXIT
 
 
+# ---------------------------------------------------------------------------
+# Market Intel integration
+# ---------------------------------------------------------------------------
+class TestMarketIntelIntegration:
+    """Tests for market intel conviction modifier in _suggest_sizing."""
+
+    def test_market_intel_mod_applied(self, monkeypatch):
+        """Mock bridge returns 0.75 → sizing reduced by 25%."""
+        import brain as brain_mod
+
+        monkeypatch.setattr(brain_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "conviction": 60,
+            "clarity": "MEDIUM",
+            "sizing_modifier": 0.75,
+        })
+        monkeypatch.setattr(brain_mod, "_get_conviction", mock_get)
+        mock_redis = MagicMock()
+        mock_redis_cls = MagicMock(return_value=mock_redis)
+        monkeypatch.setattr(brain_mod, "_redis_mod_intel", MagicMock(from_url=mock_redis_cls))
+
+        strategy = _strategy()
+        health = {"score": 100, "action": "NORMAL"}
+        regime = {"regime_type": "NEUTRAL", "score": 50}
+        snap = _snapshot()
+        signal = {"direction": "LONG", "stop_dist": 10.0}
+        result = brain_mod._suggest_sizing(strategy, health, regime, snap, signal, 100000.0)
+        assert result is not None
+        assert result["final_risk_usd"] > 0
+
+    def test_low_clarity_skips_signal(self, monkeypatch):
+        """Mock bridge clarity=LOW → _suggest_sizing returns None."""
+        import brain as brain_mod
+
+        monkeypatch.setattr(brain_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "conviction": 90,
+            "clarity": "LOW",
+            "sizing_modifier": 0.0,
+        })
+        monkeypatch.setattr(brain_mod, "_get_conviction", mock_get)
+        mock_redis_cls = MagicMock(return_value=MagicMock())
+        monkeypatch.setattr(brain_mod, "_redis_mod_intel", MagicMock(from_url=mock_redis_cls))
+
+        strategy = _strategy()
+        health = {"score": 100, "action": "NORMAL"}
+        regime = {"regime_type": "NEUTRAL", "score": 50}
+        snap = _snapshot()
+        signal = {"direction": "LONG", "stop_dist": 10.0}
+        result = brain_mod._suggest_sizing(strategy, health, regime, snap, signal, 100000.0)
+        assert result is None
+
+    def test_no_intel_normal_sizing(self, monkeypatch):
+        """_HAS_INTEL=False → sizing unchanged (market_intel_mod=1.0)."""
+        import brain as brain_mod
+
+        monkeypatch.setattr(brain_mod, "_HAS_INTEL", False)
+
+        strategy = _strategy()
+        health = {"score": 100, "action": "NORMAL"}
+        regime = {"regime_type": "NEUTRAL", "score": 50}
+        snap = _snapshot()
+        signal = {"direction": "LONG", "stop_dist": 10.0}
+        result = brain_mod._suggest_sizing(strategy, health, regime, snap, signal, 100000.0)
+        assert result is not None
+        assert result["final_risk_usd"] > 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

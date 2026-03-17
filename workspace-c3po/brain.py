@@ -15,6 +15,7 @@ Public API:
 
 from __future__ import annotations
 import math
+import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -31,6 +32,14 @@ from regime import compute_regime as _compute_regime
 from health import evaluate_strategy_health
 from shared.utils import round_to_tick
 from shared.event_calendar import check_event_suppression
+
+# Optional: Market Intel bridge for conviction-based sizing.
+try:
+    import redis as _redis_mod_intel
+    from market_intel.market_intel_bridge import get_conviction as _get_conviction
+    _HAS_INTEL = True
+except ImportError:
+    _HAS_INTEL = False
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +247,25 @@ def _suggest_sizing(
     incub = strategy.get("incubation", {})
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
-    final_risk_usd = base_risk_usd * regime_mod * health_mod * session_mod * incub_mod
+    # Market intel modifier (conviction-based sizing)
+    market_intel_mod = 1.0
+    if _HAS_INTEL:
+        try:
+            _rc = _redis_mod_intel.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379"),
+                decode_responses=True,
+            )
+            _sym = strategy.get("symbol", "ES")
+            _dir = signal.get("direction", "LONG")
+            _intel = _get_conviction(_sym, _dir, redis_client=_rc)
+            if _intel["has_data"]:
+                if _intel.get("clarity") == "LOW":
+                    return None  # Anti-conviction: skip this signal
+                market_intel_mod = _intel.get("sizing_modifier", 1.0)
+        except Exception:
+            pass  # Market intel unavailable — continue with normal sizing
+
+    final_risk_usd = base_risk_usd * regime_mod * health_mod * session_mod * incub_mod * market_intel_mod
 
     # Contract sizing
     stop_dist_pts  = signal["stop_dist"]
@@ -264,7 +291,7 @@ def _suggest_sizing(
         "contracts_suggested":     contracts,
         "use_micro":               use_micro,
         "risk_pct_suggested":      round(base_risk_pct, 4),
-        "risk_pct_after_health":   round(base_risk_pct * regime_mod * health_mod * session_mod * incub_mod, 4),
+        "risk_pct_after_health":   round(base_risk_pct * regime_mod * health_mod * session_mod * incub_mod * market_intel_mod, 4),
         "risk_multiplier_regime":  regime_mod,
         "risk_multiplier_health":  health_mod,
         "risk_multiplier_session": session_mod,

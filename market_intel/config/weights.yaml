@@ -1,0 +1,26 @@
+# Factor weights per regime for weighted fallback scoring
+# Each regime: 6 factors sum to 100%
+
+TRENDING:
+  velocity_alignment: 0.25
+  divergence_score: 0.20
+  gex_tailwind: 0.15
+  options_flow: 0.15
+  signal_integration: 0.15
+  relative_volume: 0.10
+
+VOLATILE:
+  velocity_alignment: 0.15
+  divergence_score: 0.25
+  gex_tailwind: 0.20
+  options_flow: 0.20
+  signal_integration: 0.10
+  relative_volume: 0.10
+
+NEUTRAL:
+  velocity_alignment: 0.20
+  divergence_score: 0.25
+  gex_tailwind: 0.15
+  options_flow: 0.15
+  signal_integration: 0.15
+  relative_volume: 0.10

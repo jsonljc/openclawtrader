@@ -1,0 +1,101 @@
+# IB contract definitions for all symbols polled by Market Intel
+# Each entry: symbol, exchange, secType, currency, poll_interval_seconds
+
+core_futures:
+  ES:
+    exchange: CME
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  NQ:
+    exchange: CME
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  CL:
+    exchange: NYMEX
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  GC:
+    exchange: COMEX
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  ZB:
+    exchange: CBOT
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  MES:
+    exchange: CME
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  MNQ:
+    exchange: CME
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  MCL:
+    exchange: NYMEX
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+  MGC:
+    exchange: COMEX
+    secType: FUT
+    currency: USD
+    poll_interval: 5
+
+cross_market:
+  VIX:
+    exchange: CBOE
+    secType: IND
+    currency: USD
+    poll_interval: 10
+  DXY:
+    exchange: ICE
+    secType: IND
+    currency: USD
+    poll_interval: 10
+  TNX:
+    exchange: CBOE
+    secType: IND
+    currency: USD
+    poll_interval: 10
+  HYG:
+    exchange: ARCA
+    secType: STK
+    currency: USD
+    poll_interval: 10
+  XLF:
+    exchange: ARCA
+    secType: STK
+    currency: USD
+    poll_interval: 10
+
+# Options chains: front 2 months, ±5 strikes ATM, 60s poll
+options_instruments:
+  - ES
+  - NQ
+  - CL
+
+# Depth of market: top 5 levels, 5s poll
+dom_instruments:
+  - ES
+  - NQ
+  - CL
+  - GC
+  - ZB
+
+# Tick stream: trade-by-trade, 1s poll (in-memory ring buffer only)
+tick_instruments:
+  - ES
+  - NQ
+  - CL
+  - GC
+  - ZB
+
+# Staleness threshold multiplier (data older than N × poll_interval flagged stale)
+staleness_multiplier: 3

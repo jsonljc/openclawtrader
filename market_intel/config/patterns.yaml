@@ -1,0 +1,141 @@
+# Named patterns for conviction scoring
+# Each pattern: direction (LONG/SHORT/NEUTRAL), base_score (60-95), confidence (MEDIUM/HIGH), conditions list
+
+patterns:
+  TREND_ACCELERATION:
+    direction: LONG
+    base_score: 85
+    confidence: HIGH
+    conditions:
+      - "gex < 0"
+      - "velocity_15m > velocity_5m"
+      - "velocity_5m > 0"
+      - "relative_volume > 1.5"
+      - "aligned_signal_count > 0"
+
+  REGIME_FLIP:
+    direction: DYNAMIC
+    base_score: 90
+    confidence: HIGH
+    conditions:
+      - "regime_transition.detected == True"
+      - "book_imbalance > 1.3 OR book_imbalance < 0.7"
+      - "velocity_5m aligns with new_regime"
+
+  SMART_MONEY_DIVERGENCE:
+    direction: DYNAMIC
+    base_score: 80
+    confidence: HIGH
+    conditions:
+      - "unusual_flow_direction != price_direction"
+      - "absorption_detected == True"
+      - "book_imbalance confirms unusual_flow_direction"
+
+  MOMENTUM_EXHAUSTION:
+    direction: DYNAMIC
+    base_score: 75
+    confidence: MEDIUM
+    conditions:
+      - "abs(velocity_5m) > 80"
+      - "gex flipping sign"
+      - "skew_shift > 2.0"
+      - "volume_accel < 1.0"
+
+  BREAKOUT_IMMINENT:
+    direction: NEUTRAL
+    base_score: 70
+    confidence: MEDIUM
+    conditions:
+      - "velocity_5m < 20 AND velocity_15m < 20 AND velocity_1h < 20"
+      - "book_depth < 0.5 * avg_book_depth"
+      - "iv_term_slope < 0"
+
+  FEAR_CAPITULATION:
+    direction: LONG
+    base_score: 78
+    confidence: MEDIUM
+    conditions:
+      - "velocity_vix > 40"
+      - "put_call_ratio > 1.5"
+      - "velocity_5m < -60"
+      - "gex < -500"
+
+  GREED_EXHAUSTION:
+    direction: SHORT
+    base_score: 78
+    confidence: MEDIUM
+    conditions:
+      - "vix < vix_20d_avg * 0.8"
+      - "call_put_ratio > 1.5"
+      - "velocity_5m > 60"
+      - "gex > 0 AND gex_flipping_positive"
+
+  CROSS_ASSET_CONFIRMATION:
+    direction: DYNAMIC
+    base_score: 88
+    confidence: HIGH
+    conditions:
+      - "aligned_divergence_count >= 3"
+      - "relative_volume > 1.0"
+
+  INSTITUTIONAL_ACCUMULATION:
+    direction: LONG
+    base_score: 82
+    confidence: HIGH
+    conditions:
+      - "absorption_detected == True"
+      - "book_imbalance > 1.3 OR book_imbalance < 0.7"
+      - "abs(velocity_5m) < 15"
+      - "volume_accel > 1.2"
+
+  LIQUIDITY_VACUUM:
+    direction: DYNAMIC
+    base_score: 85
+    confidence: HIGH
+    conditions:
+      - "book_depth < 0.5 * avg_book_depth"
+      - "velocity_5m accelerating"
+      - "relative_volume > 1.3"
+
+  TERM_STRUCTURE_SIGNAL:
+    direction: DYNAMIC
+    base_score: 73
+    confidence: MEDIUM
+    conditions:
+      - "iv_term_slope flipping sign"
+      - "gex confirming direction"
+
+  DOLLAR_DRIVEN:
+    direction: DYNAMIC
+    base_score: 80
+    confidence: HIGH
+    conditions:
+      - "abs(velocity_dxy) > 60"
+      - "divergence_cl_dxy < -0.6 OR divergence_gc_dxy < -0.6"
+
+  CREDIT_STRESS:
+    direction: SHORT
+    base_score: 83
+    confidence: HIGH
+    conditions:
+      - "divergence_es_hyg < -0.5"
+      - "velocity_tnx > 30"
+      - "skew_shift > 1.5"
+
+  NEWS_AMPLIFIER:
+    direction: DYNAMIC
+    base_score: 92
+    confidence: HIGH
+    conditions:
+      - "aligned_signal_count > 0"
+      - "unusual_flow_direction == signal_direction"
+      - "velocity_5m confirms signal_direction"
+
+  DEAD_MARKET:
+    direction: NEUTRAL
+    base_score: 0
+    confidence: LOW
+    conditions:
+      - "relative_volume < 0.5"
+      - "abs(velocity_5m) < 10 AND abs(velocity_15m) < 10 AND abs(velocity_1h) < 10"
+      - "book_depth < 0.6 * avg_book_depth"

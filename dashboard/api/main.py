@@ -33,7 +33,7 @@ app.add_middleware(
 )
 
 
-from dashboard.api.routers import portfolio, signals, alerts, trades, equity_curve, health, regime
+from dashboard.api.routers import portfolio, signals, alerts, trades, equity_curve, health, regime, market_intel
 
 app.include_router(portfolio.router)
 app.include_router(signals.router)
@@ -42,6 +42,7 @@ app.include_router(trades.router)
 app.include_router(equity_curve.router)
 app.include_router(health.router)
 app.include_router(regime.router)
+app.include_router(market_intel.router)
 
 
 @app.get("/api/health-check")

@@ -53,6 +53,7 @@ from sentinel import (
     _check_loss_velocity,
     _validate_strategy_fields,
     evaluate_intent,
+    check_hold_conviction,
 )
 
 
@@ -1137,6 +1138,149 @@ class TestCooldown:
         with patch.object(ledger, "query", return_value=entries):
             ok, _ = _check_cooldown(intent)
             assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Market Intel integration
+# ---------------------------------------------------------------------------
+class TestMarketIntelIntegration:
+    """Tests for market intel conviction modifier in evaluate_intent."""
+
+    def test_intel_sizing_modifier(self, monkeypatch):
+        """Mock bridge returns conviction 60 → _intel_mod=0.75 applied."""
+        import sentinel as sentinel_mod
+
+        _register_strategy()
+        _write_params()
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "conviction": 60,
+            "clarity": "MEDIUM",
+            "sizing_modifier": 0.75,
+        })
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+        # Mock redis import inside the function
+        mock_redis_mod = MagicMock()
+        mock_redis_mod.from_url.return_value = MagicMock()
+        monkeypatch.setattr(sentinel_mod, "_redis_mod_intel", mock_redis_mod, raising=False)
+
+        intent = _default_intent()
+        portfolio = _default_portfolio()
+        snapshot = _default_snapshot()
+        result = evaluate_intent(intent, portfolio, snapshot, "NORMAL", "RUN_001")
+        assert result.get("decision") in ("APPROVE", "DENY")
+
+    def test_intel_low_clarity_denies(self, monkeypatch):
+        """Mock bridge clarity=LOW → DENY for ENTRY intents."""
+        import sentinel as sentinel_mod
+
+        _register_strategy()
+        _write_params()
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "conviction": 90,
+            "clarity": "LOW",
+            "sizing_modifier": 0.0,
+        })
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+        mock_redis_mod = MagicMock()
+        mock_redis_mod.from_url.return_value = MagicMock()
+        monkeypatch.setattr(sentinel_mod, "_redis_mod_intel", mock_redis_mod, raising=False)
+
+        intent = _default_intent()
+        portfolio = _default_portfolio()
+        snapshot = _default_snapshot()
+        result = evaluate_intent(intent, portfolio, snapshot, "NORMAL", "RUN_001")
+        assert result["decision"] == "DENY"
+        assert "MARKET_INTEL_LOW_CLARITY" in str(result.get("reasons", []))
+
+    def test_intel_unavailable_continues(self, monkeypatch):
+        """Exception in bridge → _intel_mod=1.0, trade proceeds normally."""
+        import sentinel as sentinel_mod
+
+        _register_strategy()
+        _write_params()
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(side_effect=Exception("Redis down"))
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+        mock_redis_mod = MagicMock()
+        mock_redis_mod.from_url.return_value = MagicMock()
+        monkeypatch.setattr(sentinel_mod, "_redis_mod_intel", mock_redis_mod, raising=False)
+
+        intent = _default_intent()
+        portfolio = _default_portfolio()
+        snapshot = _default_snapshot()
+        result = evaluate_intent(intent, portfolio, snapshot, "NORMAL", "RUN_001")
+        assert "MARKET_INTEL" not in str(result.get("reasons", []))
+
+
+class TestHoldConviction:
+    """Tests for check_hold_conviction() position management."""
+
+    def test_hold_above_25_no_action(self, monkeypatch):
+        """hold_conviction >= 25 → HOLD, no tightening."""
+        import sentinel as sentinel_mod
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "hold_conviction": 60,
+            "conviction": 70,
+            "clarity": "HIGH",
+            "sizing_modifier": 1.0,
+        })
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+
+        position = {"symbol": "ES", "side": "LONG"}
+        result = check_hold_conviction(position, redis_client=MagicMock())
+        assert result["action"] == "HOLD"
+        assert result["tighten_stop"] is False
+        assert result["flag_exit"] is False
+
+    def test_hold_below_25_tighten(self, monkeypatch):
+        """hold_conviction < 25 → TIGHTEN stop."""
+        import sentinel as sentinel_mod
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "hold_conviction": 20,
+            "conviction": 30,
+            "clarity": "MEDIUM",
+            "sizing_modifier": 0.5,
+        })
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+
+        position = {"symbol": "NQ", "side": "SHORT"}
+        result = check_hold_conviction(position, redis_client=MagicMock())
+        assert result["action"] == "TIGHTEN"
+        assert result["tighten_stop"] is True
+        assert result["flag_exit"] is False
+
+    def test_hold_below_15_flag_exit(self, monkeypatch):
+        """hold_conviction < 15 → FLAG_EXIT with stop tightening."""
+        import sentinel as sentinel_mod
+
+        monkeypatch.setattr(sentinel_mod, "_HAS_INTEL", True)
+        mock_get = MagicMock(return_value={
+            "has_data": True,
+            "hold_conviction": 10,
+            "conviction": 15,
+            "clarity": "LOW",
+            "sizing_modifier": 0.0,
+        })
+        monkeypatch.setattr(sentinel_mod, "_get_market_conviction", mock_get)
+
+        position = {"symbol": "CL", "side": "LONG"}
+        result = check_hold_conviction(position, redis_client=MagicMock())
+        assert result["action"] == "FLAG_EXIT"
+        assert result["tighten_stop"] is True
+        assert result["flag_exit"] is True
 
 
 # ===================================================================

@@ -49,6 +49,7 @@ class EventType:
     DAILY_RESET               = "DAILY_RESET"
     NEWS_SIGNAL               = "NEWS_SIGNAL"
     POLYMARKET_SIGNAL         = "POLYMARKET_SIGNAL"
+    CONVICTION_SNAPSHOT       = "CONVICTION_SNAPSHOT"
 
 
 # ---------------------------------------------------------------------------

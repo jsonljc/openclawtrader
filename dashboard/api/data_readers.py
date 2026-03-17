@@ -125,3 +125,23 @@ def read_signals(redis_url: str = "") -> dict[str, list]:
         return {"news": news, "polymarket": poly}
     except Exception:
         return {"news": [], "polymarket": []}
+
+
+def read_intel(redis_url: str = "") -> dict[str, dict]:
+    """Read conviction data for all instruments from Redis."""
+    url = redis_url or os.environ.get("REDIS_URL", "redis://localhost:6379")
+    symbols = ["ES", "NQ", "CL", "GC", "ZB"]
+    result = {}
+    try:
+        import redis
+        rc = redis.from_url(url, decode_responses=True)
+        for sym in symbols:
+            raw = rc.get(f"market_intel:conviction:{sym}")
+            if raw:
+                try:
+                    result[sym] = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+    except Exception:
+        pass
+    return result

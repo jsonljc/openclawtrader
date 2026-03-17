@@ -151,3 +151,12 @@ class TestSignalsRoute:
         data = resp.json()
         assert data["news"] == []
         assert data["polymarket"] == []
+
+
+class TestIntelRoute:
+    def test_intel_route_returns_empty(self, client):
+        """No Redis → empty dict, 200 OK."""
+        resp = client.get("/api/intel")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)

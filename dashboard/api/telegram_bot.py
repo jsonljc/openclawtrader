@@ -6,6 +6,7 @@ import os
 import logging
 from dashboard.api.data_readers import (
     read_portfolio, read_alerts, read_trades, read_signals, read_health, read_regime,
+    read_intel,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,24 @@ def format_regime() -> str:
         return f"Error reading regime: {e}"
 
 
+def format_intel() -> str:
+    """Format market intel conviction data for Telegram."""
+    try:
+        intel = read_intel()
+        if not intel:
+            return "No market intel data available"
+        lines = []
+        for sym, data in sorted(intel.items()):
+            long_c = data.get("long_conviction", "?")
+            short_c = data.get("short_conviction", "?")
+            clarity = data.get("clarity", "?")
+            pattern = data.get("matched_pattern", "-")
+            lines.append(f"{sym}: L:{long_c} S:{short_c} [{clarity}] {pattern or '-'}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error reading intel: {e}"
+
+
 async def setup_telegram_bot(app) -> None:
     """Start the Telegram bot as a background task in the FastAPI app."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -205,6 +224,11 @@ async def setup_telegram_bot(app) -> None:
         tg_app.add_handler(CommandHandler("pnl", cmd_pnl, filters=chat_filter))
         tg_app.add_handler(CommandHandler("health", cmd_health, filters=chat_filter))
         tg_app.add_handler(CommandHandler("regime", cmd_regime, filters=chat_filter))
+
+        async def cmd_intel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            await update.message.reply_text(format_intel())
+
+        tg_app.add_handler(CommandHandler("intel", cmd_intel, filters=chat_filter))
 
         await tg_app.initialize()
         await tg_app.start()

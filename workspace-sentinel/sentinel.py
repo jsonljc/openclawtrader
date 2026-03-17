@@ -32,6 +32,14 @@ try:
 except ImportError:
     _HAS_SIGNALS = False
 
+# Optional: Market Intel bridge for conviction-based sizing.
+try:
+    import redis as _redis_mod_intel
+    from market_intel.market_intel_bridge import get_conviction as _get_market_conviction
+    _HAS_INTEL = True
+except ImportError:
+    _HAS_INTEL = False
+
 # ---------------------------------------------------------------------------
 # Strategy pre-flight validation
 # ---------------------------------------------------------------------------
@@ -668,6 +676,29 @@ def evaluate_intent(
     except Exception:
         pass  # Redis/signals unavailable — continue with normal rules
 
+    # --- Market intel conviction modifier ---
+    _intel_mod = 1.0
+    if _HAS_INTEL:
+        try:
+            _r_intel = _redis_mod_intel.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379"),
+                decode_responses=True,
+            )
+            _intel = _get_market_conviction(
+                intent.get("symbol", "ES"),
+                intent.get("side", "LONG"),
+                redis_client=_r_intel,
+            )
+            if _intel["has_data"]:
+                if _intel.get("clarity") == "LOW" and intent.get("intent_type") == C.IntentType.ENTRY:
+                    approval_id = IDs.make_approval_id()
+                    deny = _deny(intent, approval_id, run_id, "MARKET_INTEL_LOW_CLARITY", sp, posture=posture)
+                    ledger.append(C.EventType.INTENT_DENIED, run_id, intent.get("intent_id", ""), deny)
+                    return deny
+                _intel_mod = _intel.get("sizing_modifier", 1.0)
+        except Exception:
+            pass  # Market intel unavailable — continue with normal rules
+
     intent_id   = intent.get("intent_id", IDs.make_intent_id())
     intent_type = intent.get("intent_type", C.IntentType.ENTRY)
     strategy_id = intent.get("strategy_id", "")
@@ -817,7 +848,7 @@ def evaluate_intent(
     incub_mod = (incub.get("incubation_size_pct", 5) / 100.0) if incub.get("is_incubating") else 1.0
 
     final_risk_usd = base_risk_usd * health_mod * posture_mod * session_mod * streak_mod * vol_scalar * incub_mod
-    final_risk_usd *= _signal_mod
+    final_risk_usd *= _signal_mod * _intel_mod
 
     # --- Size contracts ---
     stop_price  = intent.get("stop_plan", {}).get("price", 0.0)
@@ -936,6 +967,32 @@ def evaluate_intent(
 
     ledger.append(C.EventType.APPROVAL_ISSUED, run_id, approval_id, approval)
     return approval
+
+
+def check_hold_conviction(position: dict, redis_client=None) -> dict:
+    """Check if hold conviction warrants tightening stops or early exit."""
+    result = {"action": "HOLD", "tighten_stop": False, "flag_exit": False}
+    if not _HAS_INTEL or redis_client is None:
+        return result
+    try:
+        _intel = _get_market_conviction(
+            position.get("symbol", "ES"),
+            position.get("side", "LONG"),
+            redis_client=redis_client,
+        )
+        if _intel["has_data"]:
+            hold = _intel.get("hold_conviction")
+            if hold is not None:
+                if hold < 15:
+                    result["action"] = "FLAG_EXIT"
+                    result["flag_exit"] = True
+                    result["tighten_stop"] = True
+                elif hold < 25:
+                    result["action"] = "TIGHTEN"
+                    result["tighten_stop"] = True
+    except Exception:
+        pass
+    return result
 
 
 # ---------------------------------------------------------------------------

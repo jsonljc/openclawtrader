@@ -122,3 +122,29 @@ class TestRegimeFormat:
         text = format_regime()
         assert "ES" in text
         assert "TRENDING" in text
+
+
+class TestFormatIntel:
+    def test_intel_format(self, monkeypatch):
+        """format_intel() returns formatted string with conviction data."""
+        from dashboard.api import telegram_bot
+
+        mock_data = {
+            "ES": {
+                "long_conviction": 82,
+                "short_conviction": 23,
+                "clarity": "HIGH",
+                "matched_pattern": "TREND_ACCELERATION",
+            },
+            "NQ": {
+                "long_conviction": 55,
+                "short_conviction": 45,
+                "clarity": "MEDIUM",
+                "matched_pattern": None,
+            },
+        }
+        monkeypatch.setattr(telegram_bot, "read_intel", lambda: mock_data)
+
+        result = telegram_bot.format_intel()
+        assert "ES: L:82 S:23 [HIGH] TREND_ACCELERATION" in result
+        assert "NQ: L:55 S:45 [MEDIUM] -" in result
