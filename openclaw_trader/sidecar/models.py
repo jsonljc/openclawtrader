@@ -11,9 +11,14 @@ class SidecarValidationError(ValueError):
 
 def _parse_iso_datetime(value: str, field_name: str) -> datetime:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (AttributeError, TypeError, ValueError) as exc:
         raise SidecarValidationError(f"invalid {field_name}: {value!r}") from exc
+
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SidecarValidationError(f"invalid {field_name}: {value!r}")
+
+    return parsed
 
 
 def _parse_et_time(value: str, field_name: str) -> time:

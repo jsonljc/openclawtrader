@@ -45,6 +45,20 @@ def test_blocked_window_rejects_invalid_time_values() -> None:
         BlockedWindow(start="25:00", end="26:00")
 
 
+def test_signal_rejects_naive_timestamp() -> None:
+    with pytest.raises(SidecarValidationError):
+        TradingAgentsSignal(
+            session_date="2026-04-12",
+            generated_at="2026-04-12T07:00:00",
+            symbol="MNQ",
+            blocked_windows_et=[],
+            disallowed_setups=[],
+            narrative="",
+            confidence=0.5,
+            raw_payload={},
+        )
+
+
 def test_playbook_rejects_invalid_datetimes_and_windows() -> None:
     with pytest.raises(SidecarValidationError):
         SessionPlaybook(
