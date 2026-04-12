@@ -30,9 +30,29 @@ def _parse_et_time(value: str, field_name: str) -> time:
         raise SidecarValidationError(f"invalid {field_name}: {value!r}") from exc
 
 
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _deep_freeze(inner) for key, inner in value.items()})
+    if isinstance(value, list):
+        return tuple(_deep_freeze(inner) for inner in value)
+    if isinstance(value, tuple):
+        return tuple(_deep_freeze(inner) for inner in value)
+    if isinstance(value, set):
+        return tuple(_deep_freeze(inner) for inner in value)
+    return value
+
+
+def _deep_thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _deep_thaw(inner) for key, inner in value.items()}
+    if isinstance(value, tuple):
+        return [_deep_thaw(inner) for inner in value]
+    return value
+
+
 def _freeze_mapping(value: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
     try:
-        return MappingProxyType(dict(value))
+        return MappingProxyType({key: _deep_freeze(inner) for key, inner in dict(value).items()})
     except (TypeError, ValueError) as exc:
         raise SidecarValidationError(f"invalid {field_name}: {value!r}") from exc
 
@@ -62,7 +82,7 @@ def _freeze_window(value: Any) -> Mapping[str, Any]:
             raise SidecarValidationError(f"invalid blocked window: {value!r}") from exc
 
     validated = BlockedWindow(**normalized)
-    return MappingProxyType(validated.to_dict())
+    return MappingProxyType(_deep_freeze(validated.to_dict()))
 
 
 def _freeze_window_tuple(values: Any) -> tuple[Mapping[str, Any], ...]:
@@ -121,11 +141,11 @@ class TradingAgentsSignal:
             "session_date": self.session_date,
             "generated_at": self.generated_at,
             "symbol": self.symbol,
-            "blocked_windows_et": [dict(window) for window in self.blocked_windows_et],
+            "blocked_windows_et": [_deep_thaw(window) for window in self.blocked_windows_et],
             "disallowed_setups": list(self.disallowed_setups),
             "narrative": self.narrative,
             "confidence": self.confidence,
-            "raw_payload": dict(self.raw_payload),
+            "raw_payload": _deep_thaw(self.raw_payload),
         }
 
 
@@ -164,7 +184,7 @@ class SessionPlaybook:
             "expires_at": self.expires_at,
             "symbol": self.symbol,
             "disallowed_setups": list(self.disallowed_setups),
-            "blocked_windows_et": [dict(window) for window in self.blocked_windows_et],
-            "source_attribution": [dict(item) for item in self.source_attribution],
+            "blocked_windows_et": [_deep_thaw(window) for window in self.blocked_windows_et],
+            "source_attribution": [_deep_thaw(item) for item in self.source_attribution],
             "fallback_reason": self.fallback_reason,
         }

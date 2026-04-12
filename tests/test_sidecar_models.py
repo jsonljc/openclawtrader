@@ -100,6 +100,73 @@ def test_signal_freezes_inputs_and_serializes_cleanly() -> None:
         signal.raw_payload["source"] = "changed"
 
 
+def test_nested_inputs_are_deep_frozen() -> None:
+    raw_payload = {
+        "source": "test",
+        "meta": {"tags": ["alpha", "beta"]},
+    }
+    source_attribution = [
+        {
+            "source": "baseline",
+            "field": "disallowed_setups",
+            "details": {"groups": ["orb", "trend"]},
+        }
+    ]
+
+    signal = TradingAgentsSignal(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T07:00:00Z",
+        symbol="MNQ",
+        blocked_windows_et=[],
+        disallowed_setups=[],
+        narrative="",
+        confidence=0.5,
+        raw_payload=raw_payload,
+    )
+    playbook = SessionPlaybook(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T07:05:00Z",
+        expires_at="2026-04-12T20:00:00Z",
+        symbol="MNQ",
+        disallowed_setups=["ORB"],
+        blocked_windows_et=[],
+        source_attribution=source_attribution,
+        fallback_reason=None,
+    )
+
+    raw_payload["meta"]["tags"].append("gamma")
+    source_attribution[0]["details"]["groups"].append("vwap")
+
+    assert signal.raw_payload["meta"]["tags"] == ("alpha", "beta")
+    assert playbook.source_attribution[0]["details"]["groups"] == ("orb", "trend")
+    assert signal.to_dict() == {
+        "session_date": "2026-04-12",
+        "generated_at": "2026-04-12T07:00:00Z",
+        "symbol": "MNQ",
+        "blocked_windows_et": [],
+        "disallowed_setups": [],
+        "narrative": "",
+        "confidence": 0.5,
+        "raw_payload": {"source": "test", "meta": {"tags": ["alpha", "beta"]}},
+    }
+    assert playbook.to_dict() == {
+        "session_date": "2026-04-12",
+        "generated_at": "2026-04-12T07:05:00Z",
+        "expires_at": "2026-04-12T20:00:00Z",
+        "symbol": "MNQ",
+        "disallowed_setups": ["ORB"],
+        "blocked_windows_et": [],
+        "source_attribution": [
+            {
+                "source": "baseline",
+                "field": "disallowed_setups",
+                "details": {"groups": ["orb", "trend"]},
+            }
+        ],
+        "fallback_reason": None,
+    }
+
+
 def test_playbook_rejects_expiry_before_generation() -> None:
     with pytest.raises(SidecarValidationError):
         SessionPlaybook(
