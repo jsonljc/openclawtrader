@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openclaw_trader.sidecar.models import (
+    BlockedWindow,
     SessionPlaybook,
     SidecarValidationError,
     TradingAgentsSignal,
@@ -37,3 +38,34 @@ def test_playbook_knows_when_it_is_active() -> None:
 
     assert playbook.is_active_for_session("2026-04-12") is True
     assert playbook.is_active_for_session("2026-04-13") is False
+
+
+def test_blocked_window_rejects_invalid_time_values() -> None:
+    with pytest.raises(SidecarValidationError):
+        BlockedWindow(start="25:00", end="26:00")
+
+
+def test_playbook_rejects_invalid_datetimes_and_windows() -> None:
+    with pytest.raises(SidecarValidationError):
+        SessionPlaybook(
+            session_date="2026-04-12",
+            generated_at="not-a-datetime",
+            expires_at="2026-04-12T20:00:00Z",
+            symbol="MNQ",
+            disallowed_setups=["ORB"],
+            blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
+            source_attribution=[],
+            fallback_reason=None,
+        )
+
+    with pytest.raises(SidecarValidationError):
+        SessionPlaybook(
+            session_date="2026-04-12",
+            generated_at="2026-04-12T07:05:00Z",
+            expires_at="2026-04-12T20:00:00Z",
+            symbol="MNQ",
+            disallowed_setups=["ORB"],
+            blocked_windows_et=[{"start": "11:00", "end": "10:30"}],
+            source_attribution=[],
+            fallback_reason=None,
+        )
