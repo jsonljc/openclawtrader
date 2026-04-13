@@ -11,10 +11,10 @@ from openclaw_trader.sidecar.models import SessionPlaybook, TradingAgentsSignal
 from openclaw_trader.sidecar.policy_compiler import compile_session_playbook
 
 
-class _FixedDatetime(real_datetime):
+class _LateDatetime(real_datetime):
     @classmethod
     def now(cls, tz=None):  # type: ignore[override]
-        return real_datetime(2026, 4, 12, 8, 15, 0, tzinfo=timezone.utc)
+        return real_datetime(2026, 4, 12, 21, 15, 0, tzinfo=timezone.utc)
 
 
 def test_compile_session_playbook_uses_signal_restrictions() -> None:
@@ -57,7 +57,7 @@ def test_compile_session_playbook_uses_signal_restrictions() -> None:
 def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch) -> None:
     from openclaw_trader.sidecar import policy_compiler
 
-    monkeypatch.setattr(policy_compiler, "datetime", _FixedDatetime)
+    monkeypatch.setattr(policy_compiler, "datetime", _LateDatetime)
 
     playbook = compile_session_playbook(
         session_date="2026-04-12",
@@ -67,7 +67,7 @@ def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch)
 
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
-    assert playbook.generated_at == "2026-04-12T08:15:00Z"
+    assert playbook.generated_at == "2026-04-12T20:00:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.source_attribution == (
@@ -97,6 +97,35 @@ def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
     assert playbook.generated_at == "2026-04-11T07:00:00Z"
+    assert playbook.disallowed_setups == ()
+    assert playbook.blocked_windows_et == ()
+    assert playbook.source_attribution == (
+        {"source": "TradingAgents", "field": "disallowed_setups"},
+    )
+    assert playbook.fallback_reason == "stale_signal"
+
+
+def test_compile_session_playbook_rejects_mismatched_symbol_signal() -> None:
+    signal = TradingAgentsSignal(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T07:00:00Z",
+        symbol="ES",
+        blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
+        disallowed_setups=["ORB"],
+        narrative="signal for another symbol",
+        confidence=0.5,
+        raw_payload={"source": "TradingAgents"},
+    )
+
+    playbook = compile_session_playbook(
+        session_date="2026-04-12",
+        symbol="MNQ",
+        signal=signal,
+    )
+
+    assert playbook.session_date == "2026-04-12"
+    assert playbook.symbol == "MNQ"
+    assert playbook.generated_at == "2026-04-12T07:00:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.source_attribution == (

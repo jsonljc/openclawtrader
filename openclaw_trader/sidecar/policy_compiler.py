@@ -10,8 +10,18 @@ def _session_expiry(session_date: str) -> str:
     return f"{session_date}T20:00:00Z"
 
 
-def _current_utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+def _parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _baseline_generated_at(session_date: str) -> str:
+    now = datetime.now(timezone.utc)
+    expiry = _parse_utc_timestamp(_session_expiry(session_date))
+    return _format_utc_timestamp(min(now, expiry))
 
 
 def _source_attribution(source: str, field: str) -> tuple[dict[str, Any], ...]:
@@ -29,7 +39,7 @@ def compile_session_playbook(
     if signal is None:
         return SessionPlaybook(
             session_date=session_date,
-            generated_at=_current_utc_timestamp(),
+            generated_at=_baseline_generated_at(session_date),
             expires_at=expires_at,
             symbol=symbol,
             disallowed_setups=(),
@@ -40,7 +50,7 @@ def compile_session_playbook(
             fallback_reason="missing_signal",
         )
 
-    stale_signal = signal.session_date != session_date
+    stale_signal = signal.session_date != session_date or signal.symbol != symbol
     if stale_signal:
         return SessionPlaybook(
             session_date=session_date,
