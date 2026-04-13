@@ -56,3 +56,28 @@ def test_compile_session_playbook_falls_back_when_signal_is_missing() -> None:
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.fallback_reason == "missing_signal"
+
+
+def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
+    signal = TradingAgentsSignal(
+        session_date="2026-04-11",
+        generated_at="2026-04-11T07:00:00Z",
+        symbol="MNQ",
+        blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
+        disallowed_setups=["ORB"],
+        narrative="prior-session signal",
+        confidence=0.5,
+        raw_payload={"source": "TradingAgents"},
+    )
+
+    playbook = compile_session_playbook(
+        session_date="2026-04-12",
+        symbol="MNQ",
+        signal=signal,
+    )
+
+    assert playbook.session_date == "2026-04-12"
+    assert playbook.symbol == "MNQ"
+    assert playbook.disallowed_setups == ()
+    assert playbook.blocked_windows_et == ()
+    assert playbook.fallback_reason == "stale_signal"
