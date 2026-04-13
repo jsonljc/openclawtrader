@@ -185,3 +185,78 @@ def test_build_runner_summary_includes_baseline_fallback() -> None:
     )
 
     assert summary == "playbook ready: 1 setup bans, 1 blocked windows (baseline fallback: missing_signal)"
+
+
+def test_run_tradingagents_premarket_continues_when_journaling_fails(monkeypatch, capsys) -> None:
+    writes: dict[str, object] = {}
+    appended: dict[str, object] = {}
+
+    monkeypatch.setattr(runner, "datetime", _FixedDatetime)
+    monkeypatch.setattr(
+        runner,
+        "get_calendar",
+        lambda: SimpleNamespace(upcoming_events=lambda now_utc, hours_ahead: []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "ledger",
+        SimpleNamespace(
+            query=lambda **kwargs: [],
+            append=lambda *args, **kwargs: appended.setdefault("call", {"args": args, "kwargs": kwargs}),
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "load_strategy_registry",
+        lambda: {
+            "orb_5m_MNQ": {
+                "strategy_id": "orb_5m_MNQ",
+                "symbol": "MNQ",
+                "status": "ACTIVE",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_tradingagents",
+        lambda command, payload: TradingAgentsSignal(
+            session_date="2026-04-13",
+            generated_at="2026-04-13T11:16:00Z",
+            symbol="MNQ",
+            blocked_windows_et=[],
+            disallowed_setups=["ORB"],
+            narrative="baseline signal",
+            confidence=0.5,
+            raw_payload={"command": command, "payload": payload},
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "compile_session_playbook",
+        lambda session_date, symbol, signal: SessionPlaybook(
+            session_date=session_date,
+            generated_at=signal.generated_at,
+            expires_at="2026-04-13T20:00:00Z",
+            symbol=symbol,
+            disallowed_setups=signal.disallowed_setups,
+            blocked_windows_et=signal.blocked_windows_et,
+            source_attribution=[{"source": "TradingAgents", "field": "disallowed_setups"}],
+            fallback_reason=None,
+        ),
+    )
+    monkeypatch.setattr(runner, "write_json", lambda name, payload: writes.setdefault(name, payload))
+    monkeypatch.setattr(
+        runner,
+        "append_journal_entry",
+        lambda kind, payload: (_ for _ in ()).throw(RuntimeError("hermes offline")),
+    )
+
+    result = runner.run_tradingagents_premarket(
+        session_date="2026-04-13",
+        symbol="MNQ",
+        command=["tradingagents", "premarket"],
+    )
+
+    assert result["summary"] == "playbook ready: 1 setup bans, 0 blocked windows"
+    assert appended["call"]["args"][0] == "SESSION_PLAYBOOK_PUBLISHED"
+    assert "playbook ready: 1 setup bans, 0 blocked windows" in capsys.readouterr().out

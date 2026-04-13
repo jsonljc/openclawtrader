@@ -109,16 +109,19 @@ def run_tradingagents_premarket(
     signal_path = write_json("tradingagents_signal.json", signal_dict)
     playbook_path = write_json("session_playbook.json", playbook_dict)
     summary = build_runner_summary(playbook_dict)
-    append_journal_entry(
-        "tradingagents_premarket",
-        {
-            "session_date": resolved_session_date,
-            "symbol": resolved_symbol,
-            "summary": summary,
-            "signal": signal_dict,
-            "playbook": playbook_dict,
-        },
-    )
+    try:
+        append_journal_entry(
+            "tradingagents_premarket",
+            {
+                "session_date": resolved_session_date,
+                "symbol": resolved_symbol,
+                "summary": summary,
+                "signal": signal_dict,
+                "playbook": playbook_dict,
+            },
+        )
+    except Exception:
+        pass
 
     ledger.append(
         C.EventType.SESSION_PLAYBOOK_PUBLISHED,
