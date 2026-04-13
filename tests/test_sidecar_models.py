@@ -60,6 +60,20 @@ def test_signal_rejects_naive_timestamp() -> None:
         )
 
 
+def test_signal_rejects_boolean_confidence() -> None:
+    with pytest.raises(SidecarValidationError, match="confidence"):
+        TradingAgentsSignal(
+            session_date="2026-04-12",
+            generated_at="2026-04-12T07:00:00Z",
+            symbol="MNQ",
+            blocked_windows_et=[],
+            disallowed_setups=[],
+            narrative="avoid noisy open",
+            confidence=True,
+            raw_payload={},
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "field_name"),
     [

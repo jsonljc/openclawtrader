@@ -56,6 +56,17 @@ def _require_optional_str(value: Any, field_name: str) -> str | None:
     return value
 
 
+def _require_confidence(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SidecarValidationError(f"invalid confidence: {value!r}")
+
+    confidence = float(value)
+    if not 0.0 <= confidence <= 1.0:
+        raise SidecarValidationError("confidence must be between 0 and 1")
+
+    return confidence
+
+
 def _deep_freeze(value: Any) -> Any:
     if isinstance(value, Mapping):
         return MappingProxyType({key: _deep_freeze(inner) for key, inner in value.items()})
@@ -158,8 +169,7 @@ class TradingAgentsSignal:
             object.__setattr__(self, "blocked_windows_et", _freeze_window_tuple(self.blocked_windows_et))
             object.__setattr__(self, "disallowed_setups", _freeze_str_tuple(self.disallowed_setups, "disallowed_setups"))
             object.__setattr__(self, "raw_payload", _freeze_mapping(self.raw_payload, "raw_payload"))
-            if not 0.0 <= self.confidence <= 1.0:
-                raise SidecarValidationError("confidence must be between 0 and 1")
+            object.__setattr__(self, "confidence", _require_confidence(self.confidence))
         except SidecarValidationError:
             raise
         except (TypeError, ValueError) as exc:
