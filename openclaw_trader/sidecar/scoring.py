@@ -47,14 +47,22 @@ def classify_blocked_trade_outcome(blocked: dict[str, Any], bars_5m: list[dict[s
             continue
 
         if is_long:
-            if low <= stop_price:
+            stop_hit = low <= stop_price
+            target_hit = high >= target_price
+            if stop_hit and target_hit:
+                return "unresolved"
+            if stop_hit:
                 return "good_block"
-            if high >= target_price:
+            if target_hit:
                 return "bad_block"
         else:
-            if high >= stop_price:
+            stop_hit = high >= stop_price
+            target_hit = low <= target_price
+            if stop_hit and target_hit:
+                return "unresolved"
+            if stop_hit:
                 return "good_block"
-            if low <= target_price:
+            if target_hit:
                 return "bad_block"
 
     return "unresolved"

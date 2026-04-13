@@ -50,7 +50,12 @@ def read_journal_entries(kind: str | None = None) -> list[dict[str, Any]]:
         line = raw_line.strip()
         if not line:
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
         if kind is None or row.get("kind") == kind:
             rows.append(row)
     return rows
