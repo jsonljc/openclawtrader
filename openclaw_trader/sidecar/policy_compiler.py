@@ -58,7 +58,7 @@ def compile_session_playbook(
         generated_at=signal.generated_at,
         expires_at=expires_at,
         symbol=symbol,
-        disallowed_setups=signal.disallowed_setups,
+        disallowed_setups=tuple(sorted(set(signal.disallowed_setups))),
         blocked_windows_et=signal.blocked_windows_et,
         source_attribution=_source_attribution("TradingAgents", "disallowed_setups"),
         fallback_reason=None,

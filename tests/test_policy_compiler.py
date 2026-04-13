@@ -26,7 +26,7 @@ def test_compile_session_playbook_uses_signal_restrictions() -> None:
             {"start": "09:30", "end": "09:45"},
             {"start": "13:55", "end": "14:20"},
         ],
-        disallowed_setups=["ORB", "VWAP"],
+        disallowed_setups=["VWAP", "ORB", "ORB"],
         narrative="avoid early volatility and late macro risk",
         confidence=0.83,
         raw_payload={"source": "TradingAgents"},

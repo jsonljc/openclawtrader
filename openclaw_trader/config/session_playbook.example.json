@@ -21,10 +21,6 @@
     {
       "source": "TradingAgents",
       "field": "disallowed_setups"
-    },
-    {
-      "source": "TradingAgents",
-      "field": "blocked_windows_et"
     }
   ],
   "fallback_reason": null
