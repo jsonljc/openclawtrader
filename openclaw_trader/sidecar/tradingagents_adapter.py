@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import subprocess
+from datetime import datetime, timezone
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -21,27 +22,29 @@ def _extract_json(stdout: str) -> dict[str, Any]:
     if not text:
         raise RuntimeError("TradingAgents produced no JSON output")
 
-    candidates = [text]
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if 0 <= first_brace < last_brace:
-        candidates.append(text[first_brace : last_brace + 1])
-
-    first_bracket = text.find("[")
-    last_bracket = text.rfind("]")
-    if 0 <= first_bracket < last_bracket:
-        candidates.append(text[first_bracket : last_bracket + 1])
-
-    for candidate in candidates:
+    decoder = json.JSONDecoder()
+    candidate_starts = [
+        idx
+        for idx, char in enumerate(text)
+        if char in "{["
+    ]
+    for start in reversed(candidate_starts):
         try:
-            parsed = json.loads(candidate)
+            parsed, end = decoder.raw_decode(text, idx=start)
         except json.JSONDecodeError:
+            continue
+        if text[end:].strip():
             continue
         if isinstance(parsed, dict):
             return parsed
-        raise RuntimeError("TradingAgents stdout must decode to a JSON object")
+        if isinstance(parsed, list):
+            continue
 
     raise RuntimeError(f"TradingAgents stdout was not valid JSON: {stdout!r}")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def run_tradingagents(
@@ -76,5 +79,6 @@ def run_tradingagents(
         signal_payload = dict(parsed)
         raw_payload = dict(parsed.get("raw_payload", parsed))
 
+    signal_payload.setdefault("generated_at", _utc_now_iso())
     signal_payload["raw_payload"] = raw_payload
     return TradingAgentsSignal(**signal_payload)

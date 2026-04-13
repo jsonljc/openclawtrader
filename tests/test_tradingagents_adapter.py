@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import openclaw_trader.sidecar.tradingagents_adapter as adapter
 from openclaw_trader.sidecar.models import TradingAgentsSignal
 from openclaw_trader.sidecar.tradingagents_adapter import run_tradingagents
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return datetime(2026, 4, 13, 7, 11, 0, tzinfo=timezone.utc)
 
 
 def test_run_tradingagents_normalizes_subprocess_stdout_into_signal() -> None:
@@ -68,6 +76,73 @@ def test_run_tradingagents_normalizes_subprocess_stdout_into_signal() -> None:
             },
         },
     }
+
+
+def test_run_tradingagents_synthesizes_generated_at_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr(adapter, "datetime", _FixedDatetime)
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, sys; "
+            "payload = json.loads(sys.stdin.read()); "
+            "print(json.dumps({"
+            "\"session_date\": payload[\"session_date\"], "
+            "\"symbol\": payload[\"symbol\"], "
+            "\"blocked_windows_et\": [], "
+            "\"disallowed_setups\": [], "
+            "\"narrative\": \"fallback clock\", "
+            "\"confidence\": 0.5, "
+            "\"raw_payload\": {\"source\": \"tradingagents\"}"
+            "}))"
+        ),
+    ]
+
+    signal = run_tradingagents(
+        command=command,
+        payload={
+            "session_date": "2026-04-13",
+            "symbol": "MNQ",
+        },
+    )
+
+    assert signal.generated_at == "2026-04-13T07:11:00Z"
+    assert signal.to_dict()["generated_at"] == "2026-04-13T07:11:00Z"
+
+
+def test_run_tradingagents_parses_noisy_stdout_with_braces() -> None:
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, sys; "
+            "payload = json.loads(sys.stdin.read()); "
+            "print('[warn] stats={\"rows\": 3, \"bad\": true}') ; "
+            "print('[info] preparing output {phase=pre}') ; "
+            "print(json.dumps({"
+            "\"session_date\": payload[\"session_date\"], "
+            "\"generated_at\": \"2026-04-13T07:12:00Z\", "
+            "\"symbol\": payload[\"symbol\"], "
+            "\"blocked_windows_et\": [], "
+            "\"disallowed_setups\": [\"ORB\"], "
+            "\"narrative\": \"noisy logs\", "
+            "\"confidence\": 0.61, "
+            "\"raw_payload\": {\"source\": \"tradingagents\"}"
+            "}))"
+        ),
+    ]
+
+    signal = run_tradingagents(
+        command=command,
+        payload={
+            "session_date": "2026-04-13",
+            "symbol": "MNQ",
+        },
+    )
+
+    assert signal.generated_at == "2026-04-13T07:12:00Z"
+    assert signal.disallowed_setups == ("ORB",)
 
 
 def test_build_runner_summary_returns_exact_phrase() -> None:
