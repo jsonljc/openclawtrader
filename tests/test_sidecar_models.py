@@ -8,6 +8,7 @@ from openclaw_trader.sidecar.models import (
     SidecarValidationError,
     TradingAgentsSignal,
 )
+from openclaw_trader.sidecar import storage
 
 
 def test_signal_rejects_reversed_time_window() -> None:
@@ -147,6 +148,25 @@ def test_signal_freezes_inputs_and_serializes_cleanly() -> None:
 
     with pytest.raises(TypeError):
         signal.raw_payload["source"] = "changed"
+
+
+def test_write_json_normalizes_frozen_model_payloads(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "_DATA_DIR", tmp_path)
+
+    signal = TradingAgentsSignal(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T07:00:00Z",
+        symbol="MNQ",
+        blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
+        disallowed_setups=["ORB"],
+        narrative="avoid noisy open",
+        confidence=0.72,
+        raw_payload={"source": "test", "meta": {"tags": ["alpha", "beta"]}},
+    )
+
+    storage.write_json("signal.json", signal.__dict__)
+
+    assert storage.read_json("signal.json") == signal.to_dict()
 
 
 def test_nested_inputs_are_deep_frozen() -> None:
