@@ -48,6 +48,9 @@ def test_compile_session_playbook_uses_signal_restrictions() -> None:
         {"start": "09:30", "end": "09:45"},
         {"start": "13:55", "end": "14:20"},
     )
+    assert playbook.source_attribution == (
+        {"source": "TradingAgents", "field": "disallowed_setups"},
+    )
     assert playbook.fallback_reason is None
 
 
@@ -67,6 +70,9 @@ def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch)
     assert playbook.generated_at == "2026-04-12T08:15:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
+    assert playbook.source_attribution == (
+        {"source": "baseline", "field": "fallback"},
+    )
     assert playbook.fallback_reason == "missing_signal"
 
 
@@ -95,6 +101,5 @@ def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
     assert playbook.blocked_windows_et == ()
     assert playbook.source_attribution == (
         {"source": "TradingAgents", "field": "disallowed_setups"},
-        {"source": "TradingAgents", "field": "blocked_windows_et"},
     )
     assert playbook.fallback_reason == "stale_signal"

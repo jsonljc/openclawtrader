@@ -34,7 +34,9 @@ def compile_session_playbook(
             symbol=symbol,
             disallowed_setups=(),
             blocked_windows_et=(),
-            source_attribution=(),
+            source_attribution=(
+                {"source": "baseline", "field": "fallback"},
+            ),
             fallback_reason="missing_signal",
         )
 
@@ -47,10 +49,7 @@ def compile_session_playbook(
             symbol=symbol,
             disallowed_setups=(),
             blocked_windows_et=(),
-            source_attribution=(
-                *_source_attribution("TradingAgents", "disallowed_setups"),
-                *_source_attribution("TradingAgents", "blocked_windows_et"),
-            ),
+            source_attribution=_source_attribution("TradingAgents", "disallowed_setups"),
             fallback_reason="stale_signal",
         )
 
@@ -61,9 +60,6 @@ def compile_session_playbook(
         symbol=symbol,
         disallowed_setups=signal.disallowed_setups,
         blocked_windows_et=signal.blocked_windows_et,
-        source_attribution=(
-            *_source_attribution("TradingAgents", "disallowed_setups"),
-            *_source_attribution("TradingAgents", "blocked_windows_et"),
-        ),
+        source_attribution=_source_attribution("TradingAgents", "disallowed_setups"),
         fallback_reason=None,
     )
