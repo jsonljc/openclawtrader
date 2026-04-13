@@ -20,6 +20,7 @@ except ImportError:
     ET = timezone(timedelta(hours=-5))
 
 from openclaw_trader.sidecar.policy_compiler import compile_session_playbook
+from openclaw_trader.sidecar.hermes_journal import append_journal_entry
 from openclaw_trader.sidecar.storage import write_json
 from openclaw_trader.sidecar.tradingagents_adapter import run_tradingagents
 from shared import contracts as C
@@ -62,7 +63,11 @@ def _recent_trades(limit: int = 50) -> list[dict[str, Any]]:
 def build_runner_summary(playbook_dict: Mapping[str, Any]) -> str:
     setup_bans = len(playbook_dict.get("disallowed_setups", []))
     blocked_windows = len(playbook_dict.get("blocked_windows_et", []))
-    return f"playbook ready: {setup_bans} setup bans, {blocked_windows} blocked windows"
+    summary = f"playbook ready: {setup_bans} setup bans, {blocked_windows} blocked windows"
+    fallback_reason = playbook_dict.get("fallback_reason")
+    if fallback_reason:
+        summary += f" (baseline fallback: {fallback_reason})"
+    return summary
 
 
 def build_runner_payload(session_date: str, symbol: str, now_utc: datetime | None = None) -> dict[str, Any]:
@@ -104,6 +109,16 @@ def run_tradingagents_premarket(
     signal_path = write_json("tradingagents_signal.json", signal_dict)
     playbook_path = write_json("session_playbook.json", playbook_dict)
     summary = build_runner_summary(playbook_dict)
+    append_journal_entry(
+        "tradingagents_premarket",
+        {
+            "session_date": resolved_session_date,
+            "symbol": resolved_symbol,
+            "summary": summary,
+            "signal": signal_dict,
+            "playbook": playbook_dict,
+        },
+    )
 
     ledger.append(
         C.EventType.SESSION_PLAYBOOK_PUBLISHED,

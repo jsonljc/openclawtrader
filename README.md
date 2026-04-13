@@ -46,6 +46,20 @@ python3 run_cycle.py --mode recovery
 
 ---
 
+## TradingAgents Sidecar (v1)
+
+The premarket sidecar is a read-only influence path for setup filtering and blocked-time overlays.
+
+```bash
+python3 run_tradingagents_premarket.py --symbol MNQ --command "tradingagents premarket"
+```
+
+- v1 only influences setup-family bans and blocked windows in ET.
+- It cannot place orders, override execution, or bypass Sentinel, Forge, or Watchtower.
+- The runner writes the signal and compiled playbook artifacts, then journals the run for Hermes traceability.
+
+---
+
 ## Repository Structure
 
 ```

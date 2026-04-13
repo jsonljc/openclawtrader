@@ -21,6 +21,7 @@ class _FixedDatetime(datetime):
 def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
     writes: dict[str, object] = {}
+    journal: dict[str, object] = {}
     appended: dict[str, object] = {}
 
     monkeypatch.setattr(runner, "datetime", _FixedDatetime)
@@ -102,6 +103,11 @@ def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, ca
         ),
     )
     monkeypatch.setattr(runner, "write_json", lambda name, payload: writes.setdefault(name, payload))
+    monkeypatch.setattr(
+        runner,
+        "append_journal_entry",
+        lambda kind, payload: journal.setdefault("call", {"kind": kind, "payload": payload}),
+    )
 
     result = runner.run_tradingagents_premarket(
         session_date="2026-04-13",
@@ -155,5 +161,27 @@ def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, ca
         "fallback_reason": None,
     }
     assert appended["call"]["args"][0] == "SESSION_PLAYBOOK_PUBLISHED"
+    assert journal["call"] == {
+        "kind": "tradingagents_premarket",
+        "payload": {
+            "session_date": "2026-04-13",
+            "symbol": "MNQ",
+            "summary": "playbook ready: 2 setup bans, 1 blocked windows",
+            "signal": writes["tradingagents_signal.json"],
+            "playbook": writes["session_playbook.json"],
+        },
+    }
     assert result["summary"] == "playbook ready: 2 setup bans, 1 blocked windows"
     assert "playbook ready: 2 setup bans, 1 blocked windows" in capsys.readouterr().out
+
+
+def test_build_runner_summary_includes_baseline_fallback() -> None:
+    summary = runner.build_runner_summary(
+        {
+            "disallowed_setups": ["ORB"],
+            "blocked_windows_et": [{"start": "09:30", "end": "09:45"}],
+            "fallback_reason": "missing_signal",
+        }
+    )
+
+    assert summary == "playbook ready: 1 setup bans, 1 blocked windows (baseline fallback: missing_signal)"
