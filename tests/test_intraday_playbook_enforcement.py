@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -113,6 +114,7 @@ def test_scan_setups_journals_blocked_opportunity(monkeypatch):
 
 def test_scan_setups_ignores_playbook_for_other_symbol(monkeypatch):
     captured: list[tuple[str, str, str, dict]] = []
+    current_session_date = datetime.now(timezone.utc).astimezone(run_intraday._ET).date().isoformat()
 
     monkeypatch.setattr(
         run_intraday.store,
@@ -131,7 +133,7 @@ def test_scan_setups_ignores_playbook_for_other_symbol(monkeypatch):
         run_intraday,
         "read_json",
         lambda name: {
-            "session_date": "2026-04-13",
+            "session_date": current_session_date,
             "symbol": "MNQ",
             "disallowed_setups": ["ORB"],
             "blocked_windows_et": [{"start": "09:30", "end": "10:00"}],
