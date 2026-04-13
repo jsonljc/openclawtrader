@@ -49,6 +49,9 @@ class EventType:
     DAILY_RESET               = "DAILY_RESET"
     NEWS_SIGNAL               = "NEWS_SIGNAL"
     POLYMARKET_SIGNAL         = "POLYMARKET_SIGNAL"
+    SESSION_PLAYBOOK_PUBLISHED = "SESSION_PLAYBOOK_PUBLISHED"
+    INTRADAY_SETUP_BLOCKED     = "INTRADAY_SETUP_BLOCKED"
+    HERMES_SCORECARD           = "HERMES_SCORECARD"
 
 
 # ---------------------------------------------------------------------------

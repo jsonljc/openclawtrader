@@ -1,0 +1,31 @@
+{
+  "session_date": "2026-04-12",
+  "generated_at": "2026-04-12T07:10:00Z",
+  "expires_at": "2026-04-12T20:00:00Z",
+  "symbol": "MNQ",
+  "disallowed_setups": [
+    "ORB",
+    "VWAP"
+  ],
+  "blocked_windows_et": [
+    {
+      "start": "09:30",
+      "end": "09:45"
+    },
+    {
+      "start": "13:55",
+      "end": "14:20"
+    }
+  ],
+  "source_attribution": [
+    {
+      "source": "TradingAgents",
+      "field": "disallowed_setups"
+    },
+    {
+      "source": "TradingAgents",
+      "field": "blocked_windows_et"
+    }
+  ],
+  "fallback_reason": null
+}

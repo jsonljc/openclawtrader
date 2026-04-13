@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openclawtrader.local/schemas/session_playbook.schema.json",
+  "title": "Session Playbook",
+  "description": "Strict intraday session playbook compiled from TradingAgents signals or deterministic fallback rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_date",
+    "generated_at",
+    "expires_at",
+    "symbol",
+    "disallowed_setups",
+    "blocked_windows_et",
+    "source_attribution"
+  ],
+  "properties": {
+    "session_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1
+    },
+    "disallowed_setups": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "blocked_windows_et": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "start": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          },
+          "end": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          }
+        }
+      }
+    },
+    "source_attribution": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "fallback_reason": {
+      "type": ["string", "null"],
+      "minLength": 1
+    }
+  }
+}
