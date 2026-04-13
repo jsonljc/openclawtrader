@@ -1,22 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .models import SessionPlaybook, TradingAgentsSignal
-
-
-def _session_start_timestamp(session_date: str) -> str:
-    return f"{session_date}T00:00:00Z"
 
 
 def _session_expiry(session_date: str) -> str:
     return f"{session_date}T20:00:00Z"
 
 
-def _source_attribution(source: str, field: str, reason: str | None = None) -> tuple[dict[str, Any], ...]:
+def _current_utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _source_attribution(source: str, field: str) -> tuple[dict[str, Any], ...]:
     entry: dict[str, Any] = {"source": source, "field": field}
-    if reason is not None:
-        entry["reason"] = reason
     return (entry,)
 
 
@@ -30,12 +29,12 @@ def compile_session_playbook(
     if signal is None:
         return SessionPlaybook(
             session_date=session_date,
-            generated_at=_session_start_timestamp(session_date),
+            generated_at=_current_utc_timestamp(),
             expires_at=expires_at,
             symbol=symbol,
             disallowed_setups=(),
             blocked_windows_et=(),
-            source_attribution=_source_attribution("baseline", "fallback", "missing_signal"),
+            source_attribution=(),
             fallback_reason="missing_signal",
         )
 
@@ -43,12 +42,15 @@ def compile_session_playbook(
     if stale_signal:
         return SessionPlaybook(
             session_date=session_date,
-            generated_at=_session_start_timestamp(session_date),
+            generated_at=signal.generated_at,
             expires_at=expires_at,
             symbol=symbol,
             disallowed_setups=(),
             blocked_windows_et=(),
-            source_attribution=_source_attribution("baseline", "fallback", "stale_signal"),
+            source_attribution=(
+                *_source_attribution("TradingAgents", "disallowed_setups"),
+                *_source_attribution("TradingAgents", "blocked_windows_et"),
+            ),
             fallback_reason="stale_signal",
         )
 

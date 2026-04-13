@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from datetime import datetime as real_datetime, timezone
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from openclaw_trader.sidecar.models import SessionPlaybook, TradingAgentsSignal
 from openclaw_trader.sidecar.policy_compiler import compile_session_playbook
+
+
+class _FixedDatetime(real_datetime):
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return real_datetime(2026, 4, 12, 8, 15, 0, tzinfo=timezone.utc)
 
 
 def test_compile_session_playbook_uses_signal_restrictions() -> None:
@@ -44,7 +51,11 @@ def test_compile_session_playbook_uses_signal_restrictions() -> None:
     assert playbook.fallback_reason is None
 
 
-def test_compile_session_playbook_falls_back_when_signal_is_missing() -> None:
+def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch) -> None:
+    from openclaw_trader.sidecar import policy_compiler
+
+    monkeypatch.setattr(policy_compiler, "datetime", _FixedDatetime)
+
     playbook = compile_session_playbook(
         session_date="2026-04-12",
         symbol="MNQ",
@@ -53,6 +64,7 @@ def test_compile_session_playbook_falls_back_when_signal_is_missing() -> None:
 
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
+    assert playbook.generated_at == "2026-04-12T08:15:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.fallback_reason == "missing_signal"
@@ -78,6 +90,11 @@ def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
 
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
+    assert playbook.generated_at == "2026-04-11T07:00:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
+    assert playbook.source_attribution == (
+        {"source": "TradingAgents", "field": "disallowed_setups"},
+        {"source": "TradingAgents", "field": "blocked_windows_et"},
+    )
     assert playbook.fallback_reason == "stale_signal"
