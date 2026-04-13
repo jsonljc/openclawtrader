@@ -184,3 +184,36 @@ def test_scan_setups_ignores_playbook_for_other_symbol(monkeypatch):
     assert captured[0][1] == "RUN_456"
     assert captured[0][2] == intents[0]["intent_id"]
     assert captured[0][3] == intents[0]
+
+
+def test_load_session_playbook_uses_symbol_scoped_artifact(monkeypatch):
+    reads: list[str] = []
+
+    def _read_json(name: str):
+        reads.append(name)
+        payloads = {
+            "session_playbook_ES.json": {
+                "session_date": "2026-04-13",
+                "symbol": "ES",
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [{"start": "09:30", "end": "10:00"}],
+            },
+            "session_playbook_MNQ.json": {
+                "session_date": "2026-04-13",
+                "symbol": "MNQ",
+                "disallowed_setups": [],
+                "blocked_windows_et": [],
+            },
+        }
+        return payloads.get(name)
+
+    monkeypatch.setattr(run_intraday, "read_json", _read_json)
+
+    es_playbook = run_intraday._load_session_playbook("2026-04-13", symbol="ES")
+    mnq_playbook = run_intraday._load_session_playbook("2026-04-13", symbol="MNQ")
+
+    assert reads == ["session_playbook_ES.json", "session_playbook_MNQ.json"]
+    assert es_playbook["symbol"] == "ES"
+    assert es_playbook["disallowed_setups"] == ["ORB"]
+    assert mnq_playbook["symbol"] == "MNQ"
+    assert mnq_playbook["disallowed_setups"] == []

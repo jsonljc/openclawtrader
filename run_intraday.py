@@ -79,8 +79,14 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _session_playbook_artifact_name(symbol: str | None = None) -> str:
+    if symbol:
+        return f"session_playbook_{symbol}.json"
+    return "session_playbook.json"
+
+
 def _load_session_playbook(session_date: str, symbol: str | None = None) -> dict:
-    playbook = read_json("session_playbook.json") or {}
+    playbook = read_json(_session_playbook_artifact_name(symbol)) or {}
     if playbook.get("session_date") != session_date:
         return {"disallowed_setups": [], "blocked_windows_et": []}
     playbook_symbol = playbook.get("symbol")

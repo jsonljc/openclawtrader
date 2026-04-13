@@ -82,6 +82,10 @@ def build_runner_payload(session_date: str, symbol: str, now_utc: datetime | Non
     }
 
 
+def _symbol_sidecar_name(prefix: str, symbol: str) -> str:
+    return f"{prefix}_{symbol}.json"
+
+
 def run_tradingagents_premarket(
     *,
     session_date: str | None = None,
@@ -97,17 +101,28 @@ def run_tradingagents_premarket(
 
     run_id = make_run_id()
     payload = build_runner_payload(resolved_session_date, resolved_symbol, now_utc=now_utc)
-    signal = run_tradingagents(command=resolved_command, payload=payload)
+    try:
+        signal = run_tradingagents(command=resolved_command, payload=payload)
+    except Exception:
+        signal = None
     playbook = compile_session_playbook(
         session_date=resolved_session_date,
         symbol=resolved_symbol,
         signal=signal,
     )
 
-    signal_dict = signal.to_dict()
+    signal_dict = signal.to_dict() if signal is not None else None
     playbook_dict = playbook.to_dict()
-    signal_path = write_json("tradingagents_signal.json", signal_dict)
-    playbook_path = write_json("session_playbook.json", playbook_dict)
+    signal_path = None
+    if signal_dict is not None:
+        signal_path = write_json(
+            _symbol_sidecar_name("tradingagents_signal", resolved_symbol),
+            signal_dict,
+        )
+    playbook_path = write_json(
+        _symbol_sidecar_name("session_playbook", resolved_symbol),
+        playbook_dict,
+    )
     summary = build_runner_summary(playbook_dict)
     try:
         append_journal_entry(
@@ -133,7 +148,7 @@ def run_tradingagents_premarket(
             "summary": summary,
             "signal": signal_dict,
             "playbook": playbook_dict,
-            "signal_path": str(signal_path),
+            "signal_path": str(signal_path) if signal_path is not None else None,
             "playbook_path": str(playbook_path),
         },
     )
@@ -144,7 +159,7 @@ def run_tradingagents_premarket(
         "session_date": resolved_session_date,
         "symbol": resolved_symbol,
         "summary": summary,
-        "signal_path": str(signal_path),
+        "signal_path": str(signal_path) if signal_path is not None else None,
         "playbook_path": str(playbook_path),
         "signal": signal_dict,
         "playbook": playbook_dict,

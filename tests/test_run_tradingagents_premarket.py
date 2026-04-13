@@ -137,7 +137,7 @@ def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, ca
             }
         ],
     }
-    assert writes["tradingagents_signal.json"] == {
+    assert writes["tradingagents_signal_MNQ.json"] == {
         "session_date": "2026-04-13",
         "generated_at": "2026-04-13T11:16:00Z",
         "symbol": "MNQ",
@@ -150,7 +150,7 @@ def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, ca
             "payload": captured["payload"],
         },
     }
-    assert writes["session_playbook.json"] == {
+    assert writes["session_playbook_MNQ.json"] == {
         "session_date": "2026-04-13",
         "generated_at": "2026-04-13T11:16:00Z",
         "expires_at": "2026-04-13T20:00:00Z",
@@ -167,8 +167,8 @@ def test_run_tradingagents_premarket_builds_payload_and_persists(monkeypatch, ca
             "session_date": "2026-04-13",
             "symbol": "MNQ",
             "summary": "playbook ready: 2 setup bans, 1 blocked windows",
-            "signal": writes["tradingagents_signal.json"],
-            "playbook": writes["session_playbook.json"],
+            "signal": writes["tradingagents_signal_MNQ.json"],
+            "playbook": writes["session_playbook_MNQ.json"],
         },
     }
     assert result["summary"] == "playbook ready: 2 setup bans, 1 blocked windows"
@@ -260,3 +260,87 @@ def test_run_tradingagents_premarket_continues_when_journaling_fails(monkeypatch
     assert result["summary"] == "playbook ready: 1 setup bans, 0 blocked windows"
     assert appended["call"]["args"][0] == "SESSION_PLAYBOOK_PUBLISHED"
     assert "playbook ready: 1 setup bans, 0 blocked windows" in capsys.readouterr().out
+
+
+def test_run_tradingagents_premarket_falls_back_to_baseline_when_tradingagents_fails(
+    monkeypatch, capsys
+) -> None:
+    writes: dict[str, object] = {}
+    appended: dict[str, object] = {}
+    compiled: dict[str, object] = {}
+
+    monkeypatch.setattr(runner, "datetime", _FixedDatetime)
+    monkeypatch.setattr(
+        runner,
+        "get_calendar",
+        lambda: SimpleNamespace(upcoming_events=lambda now_utc, hours_ahead: []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "ledger",
+        SimpleNamespace(
+            query=lambda **kwargs: [],
+            append=lambda *args, **kwargs: appended.setdefault("call", {"args": args, "kwargs": kwargs}),
+        ),
+    )
+    monkeypatch.setattr(runner, "load_strategy_registry", lambda: {})
+    monkeypatch.setattr(
+        runner,
+        "run_tradingagents",
+        lambda command, payload: (_ for _ in ()).throw(RuntimeError("adapter failed")),
+    )
+
+    def _compile(session_date, symbol, signal):
+        compiled["call"] = {
+            "session_date": session_date,
+            "symbol": symbol,
+            "signal": signal,
+        }
+        return SessionPlaybook(
+            session_date=session_date,
+            generated_at="2026-04-13T11:15:00Z",
+            expires_at="2026-04-13T20:00:00Z",
+            symbol=symbol,
+            disallowed_setups=(),
+            blocked_windows_et=(),
+            source_attribution=[{"source": "baseline", "field": "fallback"}],
+            fallback_reason="missing_signal",
+        )
+
+    monkeypatch.setattr(runner, "compile_session_playbook", _compile)
+    monkeypatch.setattr(runner, "write_json", lambda name, payload: writes.setdefault(name, payload))
+    monkeypatch.setattr(
+        runner,
+        "append_journal_entry",
+        lambda kind, payload: None,
+    )
+
+    result = runner.run_tradingagents_premarket(
+        session_date="2026-04-13",
+        symbol="MNQ",
+        command=["tradingagents", "premarket"],
+    )
+
+    assert compiled["call"] == {
+        "session_date": "2026-04-13",
+        "symbol": "MNQ",
+        "signal": None,
+    }
+    assert "tradingagents_signal_MNQ.json" not in writes
+    assert writes["session_playbook_MNQ.json"] == {
+        "session_date": "2026-04-13",
+        "generated_at": "2026-04-13T11:15:00Z",
+        "expires_at": "2026-04-13T20:00:00Z",
+        "symbol": "MNQ",
+        "disallowed_setups": [],
+        "blocked_windows_et": [],
+        "source_attribution": [{"source": "baseline", "field": "fallback"}],
+        "fallback_reason": "missing_signal",
+    }
+    assert result["summary"] == "playbook ready: 0 setup bans, 0 blocked windows (baseline fallback: missing_signal)"
+    assert result["signal"] is None
+    assert result["playbook"] == writes["session_playbook_MNQ.json"]
+    assert appended["call"]["args"][0] == "SESSION_PLAYBOOK_PUBLISHED"
+    assert appended["call"]["args"][3]["signal"] is None
+    assert appended["call"]["args"][3]["playbook"] == writes["session_playbook_MNQ.json"]
+    assert "playbook ready: 0 setup bans, 0 blocked windows (baseline fallback: missing_signal)" in capsys.readouterr().out
