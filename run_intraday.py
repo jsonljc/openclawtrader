@@ -43,6 +43,7 @@ from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 from shared.correlation import update_portfolio_heat_correlations
+from openclaw_trader.sidecar.storage import read_json
 
 # Optional: Redis for reading news signals (NEWS_DIRECTIONAL scanner).
 try:
@@ -62,6 +63,13 @@ from structure import compute_structure
 from regime_intraday import classify_regime
 from scorer import score_opportunity
 
+try:
+    import zoneinfo as _zoneinfo
+
+    _ET = _zoneinfo.ZoneInfo("America/New_York")
+except ImportError:  # pragma: no cover
+    _ET = timezone.utc
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,6 +77,26 @@ from scorer import score_opportunity
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _load_session_playbook(session_date: str) -> dict:
+    playbook = read_json("session_playbook.json") or {}
+    if playbook.get("session_date") != session_date:
+        return {"disallowed_setups": [], "blocked_windows_et": []}
+    return playbook
+
+
+def _blocked_by_playbook(
+    playbook: dict,
+    setup_family: str,
+    current_et_hhmm: str,
+) -> tuple[bool, str | None]:
+    if setup_family in set(playbook.get("disallowed_setups", [])):
+        return False, "setup_disallowed"
+    for window in playbook.get("blocked_windows_et", []):
+        if window["start"] <= current_et_hhmm < window["end"]:
+            return False, "window_blocked"
+    return True, None
 
 
 # Track signal IDs already traded to enforce one-trade-per-event (Section 16).
@@ -105,6 +133,10 @@ def _scan_setups(
 
     intents: list[dict] = []
     registry = store.load_strategy_registry()
+    current_et = datetime.now(timezone.utc).astimezone(_ET)
+    session_date = current_et.date().isoformat()
+    playbook = _load_session_playbook(session_date)
+    current_et_hhmm = current_et.strftime("%H:%M")
 
     # Intraday strategies to scan
     intraday_strategies = {
@@ -167,6 +199,26 @@ def _scan_setups(
             candidate = detect_news(**detect_kwargs)
 
         if candidate is None:
+            continue
+
+        allowed, block_reason = _blocked_by_playbook(playbook, setup_family, current_et_hhmm)
+        if not allowed:
+            ledger.append(
+                C.EventType.INTRADAY_SETUP_BLOCKED,
+                run_id,
+                strategy_id,
+                {
+                    "strategy_id": strategy_id,
+                    "symbol": symbol,
+                    "setup_family": setup_family,
+                    "block_reason": block_reason,
+                    "bar_ts": bars_5m[-1].get("t") if bars_5m else "",
+                    "entry_price": candidate["entry_price"],
+                    "stop_price": candidate["stop_price"],
+                    "target_price": candidate["target_price"],
+                },
+            )
+            _log(f"  Setup {setup_family}/{symbol} blocked by playbook ({block_reason})")
             continue
 
         # Record traded signal ID for one-trade-per-event dedup
