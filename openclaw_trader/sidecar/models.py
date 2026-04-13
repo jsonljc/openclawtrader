@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import date, datetime, time
 from types import MappingProxyType
 from typing import Any
 
@@ -28,6 +28,32 @@ def _parse_et_time(value: str, field_name: str) -> time:
         return datetime.strptime(value, "%H:%M").time()
     except (TypeError, ValueError) as exc:
         raise SidecarValidationError(f"invalid {field_name}: {value!r}") from exc
+
+
+def _require_iso_date(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise SidecarValidationError(f"invalid {field_name}: {value!r}")
+
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise SidecarValidationError(f"invalid {field_name}: {value!r}") from exc
+
+    return value
+
+
+def _require_str(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise SidecarValidationError(f"invalid {field_name}: {value!r}")
+    return value
+
+
+def _require_optional_str(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SidecarValidationError(f"invalid {field_name}: {value!r}")
+    return value
 
 
 def _deep_freeze(value: Any) -> Any:
@@ -125,6 +151,9 @@ class TradingAgentsSignal:
 
     def __post_init__(self) -> None:
         try:
+            object.__setattr__(self, "session_date", _require_iso_date(self.session_date, "session_date"))
+            object.__setattr__(self, "symbol", _require_str(self.symbol, "symbol"))
+            object.__setattr__(self, "narrative", _require_str(self.narrative, "narrative"))
             _parse_iso_datetime(self.generated_at, "generated_at")
             object.__setattr__(self, "blocked_windows_et", _freeze_window_tuple(self.blocked_windows_et))
             object.__setattr__(self, "disallowed_setups", _freeze_str_tuple(self.disallowed_setups, "disallowed_setups"))
@@ -162,6 +191,9 @@ class SessionPlaybook:
 
     def __post_init__(self) -> None:
         try:
+            object.__setattr__(self, "session_date", _require_iso_date(self.session_date, "session_date"))
+            object.__setattr__(self, "symbol", _require_str(self.symbol, "symbol"))
+            object.__setattr__(self, "fallback_reason", _require_optional_str(self.fallback_reason, "fallback_reason"))
             generated_at = _parse_iso_datetime(self.generated_at, "generated_at")
             expires_at = _parse_iso_datetime(self.expires_at, "expires_at")
             if expires_at < generated_at:

@@ -59,6 +59,55 @@ def test_signal_rejects_naive_timestamp() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "field_name"),
+    [
+        (
+            {
+                "session_date": 20260412,
+                "generated_at": "2026-04-12T07:00:00Z",
+                "symbol": "MNQ",
+                "blocked_windows_et": [],
+                "disallowed_setups": [],
+                "narrative": "avoid noisy open",
+                "confidence": 0.5,
+                "raw_payload": {},
+            },
+            "session_date",
+        ),
+        (
+            {
+                "session_date": "2026-04-12",
+                "generated_at": "2026-04-12T07:00:00Z",
+                "symbol": 123,
+                "blocked_windows_et": [],
+                "disallowed_setups": [],
+                "narrative": "avoid noisy open",
+                "confidence": 0.5,
+                "raw_payload": {},
+            },
+            "symbol",
+        ),
+        (
+            {
+                "session_date": "2026-04-12",
+                "generated_at": "2026-04-12T07:00:00Z",
+                "symbol": "MNQ",
+                "blocked_windows_et": [],
+                "disallowed_setups": [],
+                "narrative": 456,
+                "confidence": 0.5,
+                "raw_payload": {},
+            },
+            "narrative",
+        ),
+    ],
+)
+def test_signal_rejects_invalid_scalar_values(kwargs: dict[str, object], field_name: str) -> None:
+    with pytest.raises(SidecarValidationError, match=field_name):
+        TradingAgentsSignal(**kwargs)
+
+
 def test_signal_freezes_inputs_and_serializes_cleanly() -> None:
     blocked_windows = [{"start": "09:30", "end": "09:45"}]
     disallowed_setups = ["ORB"]
@@ -179,6 +228,55 @@ def test_playbook_rejects_expiry_before_generation() -> None:
             source_attribution=[],
             fallback_reason=None,
         )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "field_name"),
+    [
+        (
+            {
+                "session_date": 20260412,
+                "generated_at": "2026-04-12T07:05:00Z",
+                "expires_at": "2026-04-12T20:00:00Z",
+                "symbol": "MNQ",
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [],
+                "source_attribution": [],
+                "fallback_reason": None,
+            },
+            "session_date",
+        ),
+        (
+            {
+                "session_date": "2026-04-12",
+                "generated_at": "2026-04-12T07:05:00Z",
+                "expires_at": "2026-04-12T20:00:00Z",
+                "symbol": ["MNQ"],
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [],
+                "source_attribution": [],
+                "fallback_reason": None,
+            },
+            "symbol",
+        ),
+        (
+            {
+                "session_date": "2026-04-12",
+                "generated_at": "2026-04-12T07:05:00Z",
+                "expires_at": "2026-04-12T20:00:00Z",
+                "symbol": "MNQ",
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [],
+                "source_attribution": [],
+                "fallback_reason": 789,
+            },
+            "fallback_reason",
+        ),
+    ],
+)
+def test_playbook_rejects_invalid_scalar_values(kwargs: dict[str, object], field_name: str) -> None:
+    with pytest.raises(SidecarValidationError, match=field_name):
+        SessionPlaybook(**kwargs)
 
 
 def test_playbook_freezes_inputs_and_serializes_cleanly() -> None:
