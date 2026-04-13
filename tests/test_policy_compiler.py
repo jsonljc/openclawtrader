@@ -79,7 +79,7 @@ def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch)
 def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
     signal = TradingAgentsSignal(
         session_date="2026-04-11",
-        generated_at="2026-04-11T07:00:00Z",
+        generated_at="2026-04-12T23:00:00Z",
         symbol="MNQ",
         blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
         disallowed_setups=["ORB"],
@@ -96,7 +96,7 @@ def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
 
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
-    assert playbook.generated_at == "2026-04-11T07:00:00Z"
+    assert playbook.generated_at == "2026-04-12T20:00:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.source_attribution == (
@@ -108,7 +108,7 @@ def test_compile_session_playbook_falls_back_when_signal_is_stale() -> None:
 def test_compile_session_playbook_rejects_mismatched_symbol_signal() -> None:
     signal = TradingAgentsSignal(
         session_date="2026-04-12",
-        generated_at="2026-04-12T07:00:00Z",
+        generated_at="2026-04-12T23:30:00Z",
         symbol="ES",
         blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
         disallowed_setups=["ORB"],
@@ -125,7 +125,7 @@ def test_compile_session_playbook_rejects_mismatched_symbol_signal() -> None:
 
     assert playbook.session_date == "2026-04-12"
     assert playbook.symbol == "MNQ"
-    assert playbook.generated_at == "2026-04-12T07:00:00Z"
+    assert playbook.generated_at == "2026-04-12T20:00:00Z"
     assert playbook.disallowed_setups == ()
     assert playbook.blocked_windows_et == ()
     assert playbook.source_attribution == (
