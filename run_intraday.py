@@ -79,9 +79,12 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _load_session_playbook(session_date: str) -> dict:
+def _load_session_playbook(session_date: str, symbol: str | None = None) -> dict:
     playbook = read_json("session_playbook.json") or {}
     if playbook.get("session_date") != session_date:
+        return {"disallowed_setups": [], "blocked_windows_et": []}
+    playbook_symbol = playbook.get("symbol")
+    if symbol is not None and playbook_symbol not in (None, symbol):
         return {"disallowed_setups": [], "blocked_windows_et": []}
     return playbook
 
@@ -135,7 +138,6 @@ def _scan_setups(
     registry = store.load_strategy_registry()
     current_et = datetime.now(timezone.utc).astimezone(_ET)
     session_date = current_et.date().isoformat()
-    playbook = _load_session_playbook(session_date)
     current_et_hhmm = current_et.strftime("%H:%M")
 
     # Intraday strategies to scan
@@ -151,6 +153,7 @@ def _scan_setups(
             continue
 
         setup_family = strategy.get("signal", {}).get("setup_family", "")
+        playbook = _load_session_playbook(session_date, symbol=symbol)
         levels = structure_levels.get(symbol)
 
         # Collect 5m bars from snapshot

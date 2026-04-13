@@ -54,7 +54,7 @@ def test_scan_setups_journals_blocked_opportunity(monkeypatch):
     monkeypatch.setattr(
         run_intraday,
         "_load_session_playbook",
-        lambda session_date: {
+        lambda session_date, symbol=None: {
             "session_date": session_date,
             "disallowed_setups": ["ORB"],
             "blocked_windows_et": [],
@@ -69,6 +69,11 @@ def test_scan_setups_journals_blocked_opportunity(monkeypatch):
             "stop_price": 4990.0,
             "target_price": 5020.0,
         },
+    )
+    monkeypatch.setattr(
+        run_intraday,
+        "score_opportunity",
+        lambda **kwargs: {"total": 75},
     )
     monkeypatch.setattr(
         run_intraday.ledger,
@@ -104,3 +109,76 @@ def test_scan_setups_journals_blocked_opportunity(monkeypatch):
     assert captured[0][3]["entry_price"] == 5000.0
     assert captured[0][3]["stop_price"] == 4990.0
     assert captured[0][3]["target_price"] == 5020.0
+
+
+def test_scan_setups_ignores_playbook_for_other_symbol(monkeypatch):
+    captured: list[tuple[str, str, str, dict]] = []
+
+    monkeypatch.setattr(
+        run_intraday.store,
+        "load_strategy_registry",
+        lambda: {
+            "STRAT_ORB_ES": {
+                "timeframe": "5m",
+                "status": "ACTIVE",
+                "symbol": "ES",
+                "contract_month": "ESM6",
+                "signal": {"setup_family": "ORB"},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        run_intraday,
+        "read_json",
+        lambda name: {
+            "session_date": "2026-04-13",
+            "symbol": "MNQ",
+            "disallowed_setups": ["ORB"],
+            "blocked_windows_et": [{"start": "09:30", "end": "10:00"}],
+        },
+    )
+    monkeypatch.setattr(
+        orb,
+        "detect",
+        lambda **kwargs: {
+            "side": "BUY",
+            "entry_price": 5000.0,
+            "stop_price": 4990.0,
+            "target_price": 5020.0,
+        },
+    )
+    monkeypatch.setattr(
+        run_intraday,
+        "score_opportunity",
+        lambda **kwargs: {"total": 75},
+    )
+    monkeypatch.setattr(
+        run_intraday.ledger,
+        "append",
+        lambda event_type, run_id, entity_id, payload: captured.append(
+            (event_type, run_id, entity_id, payload)
+        ),
+    )
+
+    intents = run_intraday._scan_setups(
+        snapshots={
+            "ES": {
+                "bars": {
+                    "5m": [{"t": "2026-04-13T13:55:00Z"}],
+                }
+            }
+        },
+        regime_report={"regime_type": "TREND"},
+        session_report={"session": "MORNING_DRIVE"},
+        structure_levels={"ES": {}},
+        run_id="RUN_456",
+        param_version="PV_0001",
+    )
+
+    assert len(intents) == 1
+    assert intents[0]["strategy_id"] == "STRAT_ORB_ES"
+    assert len(captured) == 1
+    assert captured[0][0] == run_intraday.C.EventType.INTENT_CREATED
+    assert captured[0][1] == "RUN_456"
+    assert captured[0][2] == intents[0]["intent_id"]
+    assert captured[0][3] == intents[0]
