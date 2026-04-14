@@ -154,3 +154,33 @@ def test_compile_session_playbook_rejects_mismatched_symbol_signal() -> None:
         {"source": "TradingAgents", "field": "disallowed_setups"},
     )
     assert playbook.fallback_reason == "stale_signal"
+
+
+def test_compile_session_playbook_clamps_same_session_generated_at_after_expiry() -> None:
+    signal = TradingAgentsSignal(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T23:30:00Z",
+        symbol="MNQ",
+        blocked_windows_et=[{"start": "13:55", "end": "14:20"}],
+        disallowed_setups=["ORB"],
+        narrative="late same-session signal",
+        confidence=0.4,
+        raw_payload={"source": "TradingAgents"},
+    )
+
+    playbook = compile_session_playbook(
+        session_date="2026-04-12",
+        symbol="MNQ",
+        signal=signal,
+    )
+
+    assert playbook.session_date == "2026-04-12"
+    assert playbook.symbol == "MNQ"
+    assert playbook.generated_at == "2026-04-12T20:00:00Z"
+    assert playbook.expires_at == "2026-04-12T20:00:00Z"
+    assert playbook.generated_at <= playbook.expires_at
+    assert playbook.disallowed_setups == ("ORB",)
+    assert playbook.blocked_windows_et == (
+        {"start": "13:55", "end": "14:20"},
+    )
+    assert playbook.fallback_reason is None

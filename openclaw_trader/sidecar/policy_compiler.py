@@ -38,6 +38,10 @@ def _stale_generated_at(session_date: str, generated_at: str) -> str:
     return _format_utc_timestamp(min(_parse_utc_timestamp(generated_at), expiry))
 
 
+def _bounded_generated_at(session_date: str, generated_at: str) -> str:
+    return _stale_generated_at(session_date, generated_at)
+
+
 def _source_attribution(source: str, field: str) -> tuple[dict[str, Any], ...]:
     entry: dict[str, Any] = {"source": source, "field": field}
     return (entry,)
@@ -88,7 +92,7 @@ def compile_session_playbook(
 
     return SessionPlaybook(
         session_date=session_date,
-        generated_at=signal.generated_at,
+        generated_at=_bounded_generated_at(session_date, signal.generated_at),
         expires_at=expires_at,
         symbol=symbol,
         disallowed_setups=tuple(sorted(set(signal.disallowed_setups))),

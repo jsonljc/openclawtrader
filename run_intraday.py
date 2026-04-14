@@ -119,6 +119,18 @@ def _session_date_from_timestamp(value: str | None) -> str | None:
     return parsed.astimezone(_ET).date().isoformat()
 
 
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
 def _append_blocked_setup_scorecards(
     run_id: str,
     snapshots: dict[str, dict],
@@ -188,9 +200,6 @@ def _scan_setups(
 
     intents: list[dict] = []
     registry = store.load_strategy_registry()
-    current_et = datetime.now(timezone.utc).astimezone(_ET)
-    session_date = current_et.date().isoformat()
-    current_et_hhmm = current_et.strftime("%H:%M")
 
     # Intraday strategies to scan
     intraday_strategies = {
@@ -205,11 +214,15 @@ def _scan_setups(
             continue
 
         setup_family = strategy.get("signal", {}).get("setup_family", "")
-        playbook = _load_session_playbook(session_date, symbol=symbol)
         levels = structure_levels.get(symbol)
 
         # Collect 5m bars from snapshot
         bars_5m = snapshot.get("bars", {}).get("5m", [])
+        evaluated_utc = _parse_timestamp(bars_5m[-1].get("t")) if bars_5m else None
+        current_et = (evaluated_utc or datetime.now(timezone.utc)).astimezone(_ET)
+        session_date = current_et.date().isoformat()
+        current_et_hhmm = current_et.strftime("%H:%M")
+        playbook = _load_session_playbook(session_date, symbol=symbol)
 
         # Common inputs
         detect_kwargs = {
