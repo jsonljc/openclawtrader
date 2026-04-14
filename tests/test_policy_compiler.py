@@ -50,8 +50,30 @@ def test_compile_session_playbook_uses_signal_restrictions() -> None:
     )
     assert playbook.source_attribution == (
         {"source": "TradingAgents", "field": "disallowed_setups"},
+        {"source": "TradingAgents", "field": "blocked_windows_et"},
     )
     assert playbook.fallback_reason is None
+
+
+def test_compile_session_playbook_converts_4pm_et_expiry_with_dst() -> None:
+    signal = TradingAgentsSignal(
+        session_date="2026-01-12",
+        generated_at="2026-01-12T11:00:00Z",
+        symbol="MNQ",
+        blocked_windows_et=[],
+        disallowed_setups=[],
+        narrative="winter session signal",
+        confidence=0.7,
+        raw_payload={"source": "TradingAgents"},
+    )
+
+    playbook = compile_session_playbook(
+        session_date="2026-01-12",
+        symbol="MNQ",
+        signal=signal,
+    )
+
+    assert playbook.expires_at == "2026-01-12T21:00:00Z"
 
 
 def test_compile_session_playbook_falls_back_when_signal_is_missing(monkeypatch) -> None:

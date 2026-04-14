@@ -21,8 +21,9 @@ except ImportError:
 
 from openclaw_trader.sidecar.policy_compiler import compile_session_playbook
 from openclaw_trader.sidecar.hermes_journal import append_journal_entry
-from openclaw_trader.sidecar.storage import write_json
+from openclaw_trader.sidecar.storage import read_json, write_json
 from openclaw_trader.sidecar.tradingagents_adapter import run_tradingagents
+from openclaw_trader.sidecar.models import SessionPlaybook
 from shared import contracts as C
 from shared import ledger
 from shared.event_calendar import get_calendar
@@ -86,6 +87,33 @@ def _symbol_sidecar_name(prefix: str, symbol: str) -> str:
     return f"{prefix}_{symbol}.json"
 
 
+def _parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _load_retained_playbook(
+    *,
+    session_date: str,
+    symbol: str,
+    now_utc: datetime,
+) -> SessionPlaybook | None:
+    payload = read_json(_symbol_sidecar_name("session_playbook", symbol))
+    if payload is None:
+        return None
+
+    try:
+        playbook = SessionPlaybook(**payload)
+    except Exception:
+        return None
+
+    if playbook.session_date != session_date or playbook.symbol != symbol:
+        return None
+    if _parse_utc_timestamp(playbook.expires_at) < now_utc:
+        return None
+
+    return playbook
+
+
 def run_tradingagents_premarket(
     *,
     session_date: str | None = None,
@@ -105,7 +133,14 @@ def run_tradingagents_premarket(
         signal = run_tradingagents(command=resolved_command, payload=payload)
     except Exception:
         signal = None
-    playbook = compile_session_playbook(
+    retained_playbook = None
+    if signal is None:
+        retained_playbook = _load_retained_playbook(
+            session_date=resolved_session_date,
+            symbol=resolved_symbol,
+            now_utc=now_utc,
+        )
+    playbook = retained_playbook or compile_session_playbook(
         session_date=resolved_session_date,
         symbol=resolved_symbol,
         signal=signal,
