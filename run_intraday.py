@@ -43,6 +43,7 @@ from shared import identifiers as IDs
 from shared import ledger
 from shared import state_store as store
 from shared.correlation import update_portfolio_heat_correlations
+from openclaw_trader.sidecar.scoring import build_scorecard
 from openclaw_trader.sidecar.storage import read_json
 
 # Optional: Redis for reading news signals (NEWS_DIRECTIONAL scanner).
@@ -106,6 +107,51 @@ def _blocked_by_playbook(
         if window["start"] <= current_et_hhmm < window["end"]:
             return False, "window_blocked"
     return True, None
+
+
+def _session_date_from_timestamp(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(_ET).date().isoformat()
+
+
+def _append_blocked_setup_scorecards(
+    run_id: str,
+    snapshots: dict[str, dict],
+    now_utc: datetime | None = None,
+) -> list[dict]:
+    session_date = (now_utc or datetime.now(timezone.utc)).astimezone(_ET).date().isoformat()
+    blocked_entries = ledger.query(event_types=[C.EventType.INTRADAY_SETUP_BLOCKED])
+    blocked_by_symbol: dict[str, list[dict]] = {}
+
+    for entry in blocked_entries:
+        payload = entry.get("payload", {})
+        symbol = payload.get("symbol")
+        if symbol not in snapshots:
+            continue
+        if _session_date_from_timestamp(payload.get("bar_ts")) != session_date:
+            continue
+        blocked_by_symbol.setdefault(symbol, []).append(payload)
+
+    scorecards: list[dict] = []
+    for symbol, blocked_payloads in blocked_by_symbol.items():
+        bars_5m = snapshots.get(symbol, {}).get("bars", {}).get("5m", [])
+        scorecard = build_scorecard(blocked_payloads, bars_5m)
+        payload = {
+            "symbol": symbol,
+            "session_date": session_date,
+            "blocked_events": len(blocked_payloads),
+            "setup_families": sorted({p.get("setup_family", "") for p in blocked_payloads if p.get("setup_family")}),
+            **scorecard,
+        }
+        ledger.append(C.EventType.HERMES_SCORECARD, run_id, symbol, payload)
+        scorecards.append(payload)
+
+    return scorecards
 
 
 # Track signal IDs already traded to enforce one-trade-per-event (Section 16).
@@ -219,6 +265,7 @@ def _scan_setups(
                 {
                     "strategy_id": strategy_id,
                     "symbol": symbol,
+                    "side": candidate["side"],
                     "setup_family": setup_family,
                     "block_reason": block_reason,
                     "bar_ts": bars_5m[-1].get("t") if bars_5m else "",
@@ -437,6 +484,7 @@ def run_intraday_cycle(
         param_version=param_version,
         force_signal=force_signal,
     )
+    _append_blocked_setup_scorecards(run_id=run_id, snapshots=snapshots, now_utc=now_utc)
 
     if not intents:
         elapsed = time.perf_counter() - t0
