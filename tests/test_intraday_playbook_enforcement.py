@@ -61,7 +61,7 @@ def test_scan_setups_journals_blocked_opportunity(monkeypatch):
     monkeypatch.setattr(
         run_intraday,
         "_load_session_playbook",
-        lambda session_date, symbol=None: {
+        lambda session_date, symbol=None, strategy=None: {
             "session_date": session_date,
             "disallowed_setups": ["ORB"],
             "blocked_windows_et": [],
@@ -139,7 +139,7 @@ def test_scan_setups_blocks_replay_bar_using_bar_timestamp(monkeypatch):
     monkeypatch.setattr(
         run_intraday,
         "_load_session_playbook",
-        lambda session_date, symbol=None: {
+        lambda session_date, symbol=None, strategy=None: {
             "session_date": session_date,
             "disallowed_setups": [],
             "blocked_windows_et": [{"start": "09:30", "end": "10:00"}],
@@ -255,7 +255,7 @@ def test_run_intraday_cycle_emits_scorecard_for_blocked_setups(monkeypatch):
     monkeypatch.setattr(
         run_intraday,
         "_load_session_playbook",
-        lambda session_date, symbol=None: {
+        lambda session_date, symbol=None, strategy=None: {
             "session_date": session_date,
             "disallowed_setups": ["ORB"],
             "blocked_windows_et": [],
@@ -422,3 +422,78 @@ def test_load_session_playbook_uses_symbol_scoped_artifact(monkeypatch):
     assert es_playbook["disallowed_setups"] == ["ORB"]
     assert mnq_playbook["symbol"] == "MNQ"
     assert mnq_playbook["disallowed_setups"] == []
+
+
+def test_scan_setups_applies_micro_symbol_playbook_to_canonical_symbol_strategy(monkeypatch):
+    captured: list[tuple[str, str, str, dict]] = []
+    reads: list[str] = []
+
+    monkeypatch.setattr(
+        run_intraday.store,
+        "load_strategy_registry",
+        lambda: {
+            "STRAT_ORB_MNQ": {
+                "timeframe": "5m",
+                "status": "ACTIVE",
+                "symbol": "NQ",
+                "micro_symbol": "MNQ",
+                "contract_month": "NQM6",
+                "signal": {"setup_family": "ORB"},
+            }
+        },
+    )
+
+    def _read_json(name: str):
+        reads.append(name)
+        payloads = {
+            "session_playbook_MNQ.json": {
+                "session_date": "2026-04-13",
+                "symbol": "MNQ",
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [],
+            }
+        }
+        return payloads.get(name)
+
+    monkeypatch.setattr(run_intraday, "read_json", _read_json)
+    monkeypatch.setattr(
+        orb,
+        "detect",
+        lambda **kwargs: {
+            "side": "BUY",
+            "entry_price": 21000.0,
+            "stop_price": 20970.0,
+            "target_price": 21060.0,
+        },
+    )
+    monkeypatch.setattr(run_intraday, "score_opportunity", lambda **kwargs: {"total": 75})
+    monkeypatch.setattr(
+        run_intraday.ledger,
+        "append",
+        lambda event_type, run_id, entity_id, payload: captured.append(
+            (event_type, run_id, entity_id, payload)
+        ),
+    )
+
+    intents = run_intraday._scan_setups(
+        snapshots={
+            "NQ": {
+                "bars": {
+                    "5m": [{"t": "2026-04-13T13:55:00Z"}],
+                }
+            }
+        },
+        regime_report={"regime_type": "TREND"},
+        session_report={"session": "MORNING_DRIVE"},
+        structure_levels={"NQ": {}},
+        run_id="RUN_MNQ_ALIAS",
+        param_version="PV_0001",
+    )
+
+    assert intents == []
+    assert reads == ["session_playbook_NQ.json", "session_playbook_MNQ.json"]
+    assert captured[0][0] == run_intraday.C.EventType.INTRADAY_SETUP_BLOCKED
+    assert captured[0][2] == "STRAT_ORB_MNQ"
+    assert captured[0][3]["symbol"] == "NQ"
+    assert captured[0][3]["setup_family"] == "ORB"
+    assert captured[0][3]["block_reason"] == "setup_disallowed"

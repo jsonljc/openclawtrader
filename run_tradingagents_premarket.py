@@ -35,17 +35,32 @@ def _session_date_for(now_utc: datetime) -> str:
     return now_utc.astimezone(ET).date().isoformat()
 
 
+def _strategy_symbol_aliases(strategy: Mapping[str, Any]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for key in ("symbol", "micro_symbol"):
+        value = strategy.get(key)
+        if isinstance(value, str) and value and value not in aliases:
+            aliases.append(value)
+    symbols = strategy.get("symbols")
+    if isinstance(symbols, (list, tuple, set)):
+        for value in symbols:
+            if isinstance(value, str) and value and value not in aliases:
+                aliases.append(value)
+    return tuple(aliases)
+
+
+def _strategy_matches_symbol(strategy: Mapping[str, Any], symbol: str) -> bool:
+    return symbol in _strategy_symbol_aliases(strategy)
+
+
 def _active_strategies(symbol: str) -> list[dict[str, Any]]:
     registry = load_strategy_registry()
     active: list[dict[str, Any]] = []
     for strategy in registry.values():
         if strategy.get("status") != C.StrategyStatus.ACTIVE:
             continue
-        strategy_symbol = strategy.get("symbol")
-        if strategy_symbol is not None and strategy_symbol != symbol:
-            symbols = strategy.get("symbols")
-            if not isinstance(symbols, (list, tuple, set)) or symbol not in symbols:
-                continue
+        if not _strategy_matches_symbol(strategy, symbol):
+            continue
         active.append(dict(strategy))
     return active
 

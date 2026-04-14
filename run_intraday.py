@@ -86,14 +86,44 @@ def _session_playbook_artifact_name(symbol: str | None = None) -> str:
     return "session_playbook.json"
 
 
-def _load_session_playbook(session_date: str, symbol: str | None = None) -> dict:
-    playbook = read_json(_session_playbook_artifact_name(symbol)) or {}
-    if playbook.get("session_date") != session_date:
-        return {"disallowed_setups": [], "blocked_windows_et": []}
-    playbook_symbol = playbook.get("symbol")
-    if symbol is not None and playbook_symbol not in (None, symbol):
-        return {"disallowed_setups": [], "blocked_windows_et": []}
-    return playbook
+def _empty_playbook() -> dict:
+    return {"disallowed_setups": [], "blocked_windows_et": []}
+
+
+def _playbook_symbol_aliases(symbol: str | None = None, strategy: dict | None = None) -> tuple[str | None, ...]:
+    aliases: list[str | None] = []
+    if symbol is not None:
+        aliases.append(symbol)
+    if strategy:
+        for key in ("micro_symbol",):
+            value = strategy.get(key)
+            if isinstance(value, str) and value and value not in aliases:
+                aliases.append(value)
+        symbols = strategy.get("symbols")
+        if isinstance(symbols, (list, tuple, set)):
+            for value in symbols:
+                if isinstance(value, str) and value and value not in aliases:
+                    aliases.append(value)
+    if not aliases:
+        aliases.append(None)
+    return tuple(aliases)
+
+
+def _load_session_playbook(
+    session_date: str,
+    symbol: str | None = None,
+    strategy: dict | None = None,
+) -> dict:
+    candidate_symbols = _playbook_symbol_aliases(symbol, strategy)
+    for candidate_symbol in candidate_symbols:
+        playbook = read_json(_session_playbook_artifact_name(candidate_symbol)) or {}
+        if playbook.get("session_date") != session_date:
+            continue
+        playbook_symbol = playbook.get("symbol")
+        if playbook_symbol is not None and playbook_symbol not in candidate_symbols:
+            continue
+        return playbook
+    return _empty_playbook()
 
 
 def _blocked_by_playbook(
@@ -222,7 +252,7 @@ def _scan_setups(
         current_et = (evaluated_utc or datetime.now(timezone.utc)).astimezone(_ET)
         session_date = current_et.date().isoformat()
         current_et_hhmm = current_et.strftime("%H:%M")
-        playbook = _load_session_playbook(session_date, symbol=symbol)
+        playbook = _load_session_playbook(session_date, symbol=symbol, strategy=strategy)
 
         # Common inputs
         detect_kwargs = {

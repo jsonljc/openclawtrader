@@ -193,6 +193,53 @@ def test_build_runner_summary_includes_baseline_fallback() -> None:
     assert summary == "playbook ready: 1 setup bans, 1 blocked windows (baseline fallback: missing_signal)"
 
 
+def test_build_runner_payload_matches_micro_symbol_aliases(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runner,
+        "get_calendar",
+        lambda: SimpleNamespace(upcoming_events=lambda now_utc, hours_ahead: []),
+    )
+    monkeypatch.setattr(runner, "_recent_trades", lambda: [])
+    monkeypatch.setattr(
+        runner,
+        "load_strategy_registry",
+        lambda: {
+            "orb_5m_MNQ": {
+                "strategy_id": "orb_5m_MNQ",
+                "symbol": "NQ",
+                "micro_symbol": "MNQ",
+                "status": "ACTIVE",
+            },
+            "vwap_5m_NQ": {
+                "strategy_id": "vwap_5m_NQ",
+                "symbol": "NQ",
+                "status": "ACTIVE",
+            },
+            "disabled_mnq": {
+                "strategy_id": "disabled_mnq",
+                "symbol": "NQ",
+                "micro_symbol": "MNQ",
+                "status": "DISABLED",
+            },
+        },
+    )
+
+    payload = runner.build_runner_payload(
+        "2026-04-13",
+        "MNQ",
+        now_utc=datetime(2026, 4, 13, 11, 15, 0, tzinfo=timezone.utc),
+    )
+
+    assert payload["active_strategies"] == [
+        {
+            "strategy_id": "orb_5m_MNQ",
+            "symbol": "NQ",
+            "micro_symbol": "MNQ",
+            "status": "ACTIVE",
+        }
+    ]
+
+
 def test_recent_trades_returns_newest_records_when_history_exceeds_limit(monkeypatch) -> None:
     trade_rows = [
         {
