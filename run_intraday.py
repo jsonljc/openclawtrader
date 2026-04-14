@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -64,12 +64,17 @@ from structure import compute_structure
 from regime_intraday import classify_regime
 from scorer import score_opportunity
 
-try:
-    import zoneinfo as _zoneinfo
+def _build_eastern_timezone():
+    try:
+        import zoneinfo as _zoneinfo
 
-    _ET = _zoneinfo.ZoneInfo("America/New_York")
-except ImportError:  # pragma: no cover
-    _ET = timezone.utc
+        return _zoneinfo.ZoneInfo("America/New_York")
+    except ImportError:  # pragma: no cover
+        return timezone(timedelta(hours=-5))
+
+
+_ET = _build_eastern_timezone()
+_blocked_scorecard_totals: dict[tuple[str, str], tuple[int, int, int, int]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +172,9 @@ def _append_blocked_setup_scorecards(
     now_utc: datetime | None = None,
 ) -> list[dict]:
     session_date = (now_utc or datetime.now(timezone.utc)).astimezone(_ET).date().isoformat()
+    stale_keys = [key for key in _blocked_scorecard_totals if key[0] != session_date]
+    for key in stale_keys:
+        _blocked_scorecard_totals.pop(key, None)
     blocked_entries = ledger.query(event_types=[C.EventType.INTRADAY_SETUP_BLOCKED])
     blocked_by_symbol: dict[str, list[dict]] = {}
 
@@ -183,14 +191,24 @@ def _append_blocked_setup_scorecards(
     for symbol, blocked_payloads in blocked_by_symbol.items():
         bars_5m = snapshots.get(symbol, {}).get("bars", {}).get("5m", [])
         scorecard = build_scorecard(blocked_payloads, bars_5m)
+        totals = (
+            len(blocked_payloads),
+            scorecard["blocked_good"],
+            scorecard["blocked_bad"],
+            scorecard["blocked_unresolved"],
+        )
+        cache_key = (session_date, symbol)
+        if _blocked_scorecard_totals.get(cache_key) == totals:
+            continue
         payload = {
             "symbol": symbol,
             "session_date": session_date,
-            "blocked_events": len(blocked_payloads),
+            "blocked_events": totals[0],
             "setup_families": sorted({p.get("setup_family", "") for p in blocked_payloads if p.get("setup_family")}),
             **scorecard,
         }
         ledger.append(C.EventType.HERMES_SCORECARD, run_id, symbol, payload)
+        _blocked_scorecard_totals[cache_key] = totals
         scorecards.append(payload)
 
     return scorecards

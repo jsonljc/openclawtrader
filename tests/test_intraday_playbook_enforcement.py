@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import builtins
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -422,6 +423,84 @@ def test_load_session_playbook_uses_symbol_scoped_artifact(monkeypatch):
     assert es_playbook["disallowed_setups"] == ["ORB"]
     assert mnq_playbook["symbol"] == "MNQ"
     assert mnq_playbook["disallowed_setups"] == []
+
+
+def test_build_eastern_timezone_falls_back_to_fixed_offset_when_zoneinfo_missing(monkeypatch):
+    original_import = builtins.__import__
+
+    def _raising_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "zoneinfo":
+            raise ImportError("zoneinfo unavailable")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _raising_import)
+
+    et = run_intraday._build_eastern_timezone()
+
+    assert et.utcoffset(datetime(2026, 4, 14, 14, 0, tzinfo=timezone.utc)) == timedelta(hours=-5)
+    assert run_intraday._session_date_from_timestamp("2026-04-14T02:30:00Z") == "2026-04-13"
+
+
+def test_append_blocked_setup_scorecards_skips_duplicate_totals_for_same_session_symbol(monkeypatch):
+    captured: list[tuple[str, str, str, dict]] = []
+    now_utc = datetime(2026, 4, 13, 14, 10, tzinfo=timezone.utc)
+    blocked_events = [
+        {
+            "payload": {
+                "symbol": "ES",
+                "setup_family": "ORB",
+                "bar_ts": "2026-04-13T14:00:00Z",
+                "side": "BUY",
+                "stop_price": 4990.0,
+                "target_price": 5020.0,
+            }
+        }
+    ]
+
+    monkeypatch.setattr(run_intraday, "_blocked_scorecard_totals", {})
+    monkeypatch.setattr(run_intraday.ledger, "query", lambda **kwargs: list(blocked_events))
+    monkeypatch.setattr(
+        run_intraday.ledger,
+        "append",
+        lambda event_type, run_id, entity_id, payload: captured.append(
+            (event_type, run_id, entity_id, payload)
+        ),
+    )
+
+    snapshots = {
+        "ES": {
+            "bars": {
+                "5m": [
+                    {"t": "2026-04-13T14:05:00Z", "h": 5025.0, "l": 4995.0},
+                ]
+            }
+        }
+    }
+
+    first = run_intraday._append_blocked_setup_scorecards("RUN_A", snapshots, now_utc=now_utc)
+    second = run_intraday._append_blocked_setup_scorecards("RUN_B", snapshots, now_utc=now_utc)
+
+    blocked_events.append(
+        {
+            "payload": {
+                "symbol": "ES",
+                "setup_family": "VWAP",
+                "bar_ts": "2026-04-13T14:05:00Z",
+                "side": "BUY",
+                "stop_price": 5000.0,
+                "target_price": 5030.0,
+            }
+        }
+    )
+    third = run_intraday._append_blocked_setup_scorecards("RUN_C", snapshots, now_utc=now_utc)
+
+    assert len(first) == 1
+    assert second == []
+    assert len(third) == 1
+    assert [entry[1] for entry in captured] == ["RUN_A", "RUN_C"]
+    assert captured[0][0] == run_intraday.C.EventType.HERMES_SCORECARD
+    assert captured[0][3]["blocked_events"] == 1
+    assert captured[1][3]["blocked_events"] == 2
 
 
 def test_scan_setups_applies_micro_symbol_playbook_to_canonical_symbol_strategy(monkeypatch):
