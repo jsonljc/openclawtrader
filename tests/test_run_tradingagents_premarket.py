@@ -193,6 +193,33 @@ def test_build_runner_summary_includes_baseline_fallback() -> None:
     assert summary == "playbook ready: 1 setup bans, 1 blocked windows (baseline fallback: missing_signal)"
 
 
+def test_recent_trades_returns_newest_records_when_history_exceeds_limit(monkeypatch) -> None:
+    trade_rows = [
+        {
+            "ledger_seq": seq,
+            "event_type": "ORDER_FILLED",
+            "ref_id": f"T{seq}",
+            "payload": {"symbol": "MNQ", "trade_number": seq},
+        }
+        for seq in range(1, 76)
+    ]
+    calls: list[dict[str, object]] = []
+
+    def _query(**kwargs):
+        calls.append(kwargs)
+        since_seq = kwargs.get("since_seq", 0)
+        limit = kwargs.get("limit", 10_000)
+        matching = [row for row in trade_rows if row["ledger_seq"] > since_seq]
+        return matching[:limit]
+
+    monkeypatch.setattr(runner, "ledger", SimpleNamespace(query=_query))
+
+    recent = runner._recent_trades()
+
+    assert recent == trade_rows[-50:]
+    assert calls[0]["limit"] == 1_000
+
+
 def test_run_tradingagents_premarket_continues_when_journaling_fails(monkeypatch, capsys) -> None:
     writes: dict[str, object] = {}
     appended: dict[str, object] = {}

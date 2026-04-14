@@ -51,14 +51,35 @@ def _active_strategies(symbol: str) -> list[dict[str, Any]]:
 
 
 def _recent_trades(limit: int = 50) -> list[dict[str, Any]]:
-    return ledger.query(
-        event_types=[
-            C.EventType.ORDER_FILLED,
-            C.EventType.ORDER_PARTIALLY_FILLED,
-            C.EventType.POSITION_CLOSED,
-        ],
-        limit=limit,
-    )
+    if limit <= 0:
+        return []
+
+    event_types = [
+        C.EventType.ORDER_FILLED,
+        C.EventType.ORDER_PARTIALLY_FILLED,
+        C.EventType.POSITION_CLOSED,
+    ]
+    chunk_size = max(limit, 1_000)
+    since_seq = 0
+    trades: list[dict[str, Any]] = []
+
+    while True:
+        batch = ledger.query(
+            event_types=event_types,
+            since_seq=since_seq,
+            limit=chunk_size,
+        )
+        if not batch:
+            break
+        trades.extend(batch)
+        last_seq = batch[-1].get("ledger_seq")
+        if not isinstance(last_seq, int):
+            break
+        since_seq = last_seq
+        if len(batch) < chunk_size:
+            break
+
+    return trades[-limit:]
 
 
 def build_runner_summary(playbook_dict: Mapping[str, Any]) -> str:
