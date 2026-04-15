@@ -156,6 +156,45 @@ def test_compile_session_playbook_rejects_mismatched_symbol_signal() -> None:
     assert playbook.fallback_reason == "stale_signal"
 
 
+def test_compile_session_playbook_accepts_alias_normalized_micro_symbol_signal() -> None:
+    signal = TradingAgentsSignal(
+        session_date="2026-04-12",
+        generated_at="2026-04-12T12:30:00Z",
+        symbol="NQ",
+        blocked_windows_et=[{"start": "09:30", "end": "09:45"}],
+        disallowed_setups=["ORB"],
+        narrative="canonical symbol for MNQ request",
+        confidence=0.64,
+        raw_payload={
+            "request_payload": {
+                "session_date": "2026-04-12",
+                "symbol": "MNQ",
+                "active_strategies": [
+                    {
+                        "strategy_id": "STRAT_ORB_MNQ",
+                        "symbol": "NQ",
+                        "micro_symbol": "MNQ",
+                    }
+                ],
+            }
+        },
+    )
+
+    playbook = compile_session_playbook(
+        session_date="2026-04-12",
+        symbol="MNQ",
+        signal=signal,
+    )
+
+    assert playbook.session_date == "2026-04-12"
+    assert playbook.symbol == "MNQ"
+    assert playbook.fallback_reason is None
+    assert playbook.disallowed_setups == ("ORB",)
+    assert playbook.blocked_windows_et == (
+        {"start": "09:30", "end": "09:45"},
+    )
+
+
 def test_compile_session_playbook_clamps_same_session_generated_at_after_expiry() -> None:
     signal = TradingAgentsSignal(
         session_date="2026-04-12",

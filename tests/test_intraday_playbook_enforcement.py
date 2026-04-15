@@ -570,9 +570,43 @@ def test_scan_setups_applies_micro_symbol_playbook_to_canonical_symbol_strategy(
     )
 
     assert intents == []
-    assert reads == ["session_playbook_NQ.json", "session_playbook_MNQ.json"]
+    assert reads == ["session_playbook_MNQ.json"]
     assert captured[0][0] == run_intraday.C.EventType.INTRADAY_SETUP_BLOCKED
     assert captured[0][2] == "STRAT_ORB_MNQ"
     assert captured[0][3]["symbol"] == "NQ"
     assert captured[0][3]["setup_family"] == "ORB"
     assert captured[0][3]["block_reason"] == "setup_disallowed"
+
+
+def test_load_session_playbook_prefers_micro_symbol_artifact_when_both_aliases_exist(monkeypatch):
+    reads: list[str] = []
+
+    def _read_json(name: str):
+        reads.append(name)
+        payloads = {
+            "session_playbook_MNQ.json": {
+                "session_date": "2026-04-13",
+                "symbol": "MNQ",
+                "disallowed_setups": ["ORB"],
+                "blocked_windows_et": [],
+            },
+            "session_playbook_NQ.json": {
+                "session_date": "2026-04-13",
+                "symbol": "NQ",
+                "disallowed_setups": [],
+                "blocked_windows_et": [],
+            },
+        }
+        return payloads.get(name)
+
+    monkeypatch.setattr(run_intraday, "read_json", _read_json)
+
+    playbook = run_intraday._load_session_playbook(
+        "2026-04-13",
+        symbol="NQ",
+        strategy={"symbol": "NQ", "micro_symbol": "MNQ"},
+    )
+
+    assert reads == ["session_playbook_MNQ.json"]
+    assert playbook["symbol"] == "MNQ"
+    assert playbook["disallowed_setups"] == ["ORB"]

@@ -97,13 +97,14 @@ def _empty_playbook() -> dict:
 
 def _playbook_symbol_aliases(symbol: str | None = None, strategy: dict | None = None) -> tuple[str | None, ...]:
     aliases: list[str | None] = []
-    if symbol is not None:
-        aliases.append(symbol)
     if strategy:
         for key in ("micro_symbol",):
             value = strategy.get(key)
             if isinstance(value, str) and value and value not in aliases:
                 aliases.append(value)
+    if symbol is not None and symbol not in aliases:
+        aliases.append(symbol)
+    if strategy:
         symbols = strategy.get("symbols")
         if isinstance(symbols, (list, tuple, set)):
             for value in symbols:

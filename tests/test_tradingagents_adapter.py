@@ -74,6 +74,13 @@ def test_run_tradingagents_normalizes_subprocess_stdout_into_signal() -> None:
                 "recent_trades": [{"event_type": "ORDER_FILLED", "ref_id": "T1"}],
                 "active_strategies": [{"strategy_id": "orb_5m_MNQ"}],
             },
+            "request_payload": {
+                "session_date": "2026-04-13",
+                "symbol": "MNQ",
+                "upcoming_events": [{"name": "CPI", "minutes_until": 45.0}],
+                "recent_trades": [{"event_type": "ORDER_FILLED", "ref_id": "T1"}],
+                "active_strategies": [{"strategy_id": "orb_5m_MNQ"}],
+            },
         },
     }
 

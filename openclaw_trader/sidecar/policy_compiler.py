@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+from collections.abc import Mapping
 from typing import Any
 
 try:
@@ -56,6 +57,46 @@ def _signal_source_attribution(signal: TradingAgentsSignal) -> tuple[dict[str, A
     return tuple(attributions)
 
 
+def _strategy_symbol_aliases(strategy: Mapping[str, Any]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for key in ("symbol", "micro_symbol"):
+        value = strategy.get(key)
+        if isinstance(value, str) and value and value not in aliases:
+            aliases.append(value)
+    symbols = strategy.get("symbols")
+    if isinstance(symbols, (list, tuple, set)):
+        for value in symbols:
+            if isinstance(value, str) and value and value not in aliases:
+                aliases.append(value)
+    return tuple(aliases)
+
+
+def _expected_symbol_aliases(symbol: str, signal: TradingAgentsSignal | None) -> tuple[str, ...]:
+    aliases = [symbol]
+    if signal is None:
+        return tuple(aliases)
+
+    raw_payload = signal.raw_payload
+    request_payload = raw_payload.get("request_payload")
+    if not isinstance(request_payload, Mapping):
+        return tuple(aliases)
+
+    request_symbol = request_payload.get("symbol")
+    if isinstance(request_symbol, str) and request_symbol and request_symbol not in aliases:
+        aliases.append(request_symbol)
+
+    active_strategies = request_payload.get("active_strategies")
+    if isinstance(active_strategies, (list, tuple)):
+        for strategy in active_strategies:
+            if not isinstance(strategy, Mapping):
+                continue
+            for alias in _strategy_symbol_aliases(strategy):
+                if alias not in aliases:
+                    aliases.append(alias)
+
+    return tuple(aliases)
+
+
 def compile_session_playbook(
     session_date: str,
     symbol: str,
@@ -77,7 +118,8 @@ def compile_session_playbook(
             fallback_reason="missing_signal",
         )
 
-    stale_signal = signal.session_date != session_date or signal.symbol != symbol
+    expected_aliases = _expected_symbol_aliases(symbol, signal)
+    stale_signal = signal.session_date != session_date or signal.symbol not in expected_aliases
     if stale_signal:
         return SessionPlaybook(
             session_date=session_date,

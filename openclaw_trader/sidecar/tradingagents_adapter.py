@@ -80,5 +80,6 @@ def run_tradingagents(
         raw_payload = dict(parsed.get("raw_payload", parsed))
 
     signal_payload.setdefault("generated_at", _utc_now_iso())
+    raw_payload["request_payload"] = dict(payload)
     signal_payload["raw_payload"] = raw_payload
     return TradingAgentsSignal(**signal_payload)
