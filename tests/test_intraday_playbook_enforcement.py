@@ -193,6 +193,7 @@ def test_scan_setups_blocks_replay_bar_using_bar_timestamp(monkeypatch):
 def test_run_intraday_cycle_emits_scorecard_for_blocked_setups(monkeypatch):
     captured: list[tuple[str, str, str, dict]] = []
     monkeypatch.setattr(run_intraday, "_blocked_scorecard_totals", {})
+    monkeypatch.setattr(run_intraday, "datetime", _LateSessionDatetime)
 
     monkeypatch.setattr(
         run_intraday,
